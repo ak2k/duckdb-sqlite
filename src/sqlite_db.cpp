@@ -6,7 +6,7 @@
 #include "duckdb/parser/parser.hpp"
 #include "sqlite_db.hpp"
 #include "sqlite_stmt.hpp"
-#include "sqlite_http_vfs.hpp"
+#include "sqlite_duckdb_vfs_cache.hpp"
 #include "duckdb/main/client_context.hpp"
 
 namespace duckdb {
@@ -68,12 +68,12 @@ SQLiteDB SQLiteDB::Open(const string &path, const SQLiteOpenOptions &options, bo
 }
 
 SQLiteDB SQLiteDB::Open(const string &path, const SQLiteOpenOptions &options, ClientContext &context, bool is_shared) {
-	// Check if this is an HTTP path
-	if (SqliteHttpVFS::IsHTTPPath(path)) {
-		// Register the HTTP VFS if needed
-		SqliteHttpVFS::Register(context);
+	// Check if DuckDB can handle this path (remote files, etc.)
+	if (SqliteDuckDBCacheVFS::CanHandlePath(context, path)) {
+		// Register the cached DuckDB VFS if needed
+		SqliteDuckDBCacheVFS::Register(context);
 		
-		// Open with HTTP VFS
+		// Open with cached DuckDB VFS (full external cache integration)
 		SQLiteDB result;
 		int flags = SQLITE_OPEN_PRIVATECACHE | SQLITE_OPEN_READONLY;
 		if (!is_shared) {
@@ -81,9 +81,9 @@ SQLiteDB SQLiteDB::Open(const string &path, const SQLiteOpenOptions &options, Cl
 		}
 		flags |= SQLITE_OPEN_EXRESCODE;
 		
-		auto rc = sqlite3_open_v2(path.c_str(), &result.db, flags, SqliteHttpVFS::GetVFSName());
+		auto rc = sqlite3_open_v2(path.c_str(), &result.db, flags, SqliteDuckDBCacheVFS::GetVFSName());
 		if (rc != SQLITE_OK) {
-			throw std::runtime_error("Unable to open HTTP database \"" + path + "\": " + string(sqlite3_errstr(rc)));
+			throw std::runtime_error("Unable to open database \"" + path + "\": " + string(sqlite3_errstr(rc)));
 		}
 		
 		// Apply busy timeout if specified

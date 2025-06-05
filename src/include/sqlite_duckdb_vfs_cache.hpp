@@ -1,7 +1,7 @@
 //===----------------------------------------------------------------------===//
 //                         DuckDB
 //
-// sqlite_http_vfs.hpp
+// sqlite_duckdb_vfs_cache.hpp
 //
 //
 //===----------------------------------------------------------------------===//
@@ -9,55 +9,66 @@
 #pragma once
 
 #include "duckdb.hpp"
+#include "duckdb/common/file_system.hpp"
+#include "duckdb/storage/buffer_manager.hpp"
+#include "duckdb/storage/buffer/buffer_handle.hpp"
+#include "duckdb/storage/external_file_cache.hpp"
+#include "duckdb/storage/caching_file_system.hpp"
 #include "sqlite3.h"
 #include <mutex>
-#include <unordered_map>
+#include <memory>
 
 namespace duckdb {
 
 class ClientContext;
 
-struct HttpBlock {
-	idx_t offset;
-	idx_t size;
-	unique_ptr<char[]> data;
-};
-
-class HttpFile {
+// DuckDB file that uses external file cache for proper cache sharing
+class DuckDBCachedFile {
 public:
-	HttpFile(ClientContext &context, const string &url);
-	~HttpFile();
+	DuckDBCachedFile(ClientContext &context, const string &path);
+	~DuckDBCachedFile();
 
-	//! Read data from the HTTP file
+	//! Read data from the file using external file cache
 	int Read(void *buffer, int amount, sqlite3_int64 offset);
 	//! Get the file size
 	sqlite3_int64 GetFileSize();
-	//! Get the URL
-	const string &GetURL() const { return url; }
+	//! Get the path
+	const string &GetPath() const { return path; }
 
 private:
-	//! Fetch a block from the HTTP server
-	void FetchBlock(idx_t block_idx);
-	//! Get the block size
-	idx_t GetBlockSize() const { return 1024 * 1024; } // 1MB blocks
+	//! Try to get cached range without fetching
+	BufferHandle TryGetCachedRange(idx_t offset, idx_t amount);
+	//! Ensure file is open and metadata is loaded
+	void EnsureFileOpen();
+	//! Try to read from cache or fetch if needed
+	BufferHandle ReadFromCache(idx_t offset, idx_t amount);
+	
+	//! Get the block size (1MB like original)
+	static constexpr idx_t BLOCK_SIZE = 1024 * 1024;
 
 private:
 	ClientContext &context;
-	string url;
+	string path;
+	ExternalFileCache &cache;
+	ExternalFileCache::CachedFile &cached_file;
+	unique_ptr<FileHandle> file_handle;
 	sqlite3_int64 file_size;
-	std::mutex cache_mutex;
-	std::unordered_map<idx_t, unique_ptr<HttpBlock>> block_cache;
 	bool size_fetched;
+	
+	// Version tracking for cache validation
+	time_t last_modified;
+	string version_tag;
 };
 
-class SqliteHttpVFS {
+// VFS that uses DuckDB's external file cache for proper sharing
+class SqliteDuckDBCacheVFS {
 public:
-	//! Register the HTTP VFS with SQLite
+	//! Register the cached DuckDB VFS with SQLite
 	static void Register(ClientContext &context);
-	//! Check if a path is an HTTP URL
-	static bool IsHTTPPath(const string &path);
+	//! Check if DuckDB can handle this path
+	static bool CanHandlePath(ClientContext &context, const string &path);
 	//! Get the VFS name
-	static const char *GetVFSName() { return "duckdb_httpfs"; }
+	static const char *GetVFSName() { return "duckdb_cache_fs"; }
 
 	//! VFS methods - must be public for static initialization
 	static int Open(sqlite3_vfs *vfs, const char *filename, sqlite3_file *file, int flags, int *out_flags);
@@ -92,10 +103,10 @@ private:
 	static std::mutex context_mutex;
 };
 
-//! SQLite file structure for HTTP files
-struct SqliteHttpFile {
+//! SQLite file structure for DuckDB cached files
+struct SqliteDuckDBCachedFile {
 	sqlite3_file base;  // Must be first
-	unique_ptr<HttpFile> http_file;
+	unique_ptr<DuckDBCachedFile> duckdb_file;
 };
 
 } // namespace duckdb

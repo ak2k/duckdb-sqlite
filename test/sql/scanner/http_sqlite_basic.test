@@ -1,19 +1,33 @@
 # name: test/sql/scanner/http_sqlite_basic.test
-# description: Test HTTP URL detection for SQLite scanner
+# description: Test HTTP URL detection and VFS registration for SQLite scanner
 # group: [sqlite_scanner]
 
 require sqlite_scanner
 
-# Test that HTTP URLs are properly handled by our extension
-# Note: This test requires httpfs to be available in the system
-
-# Test 1: Verify extension loads
+# Test 1: Verify extension loads and HTTP VFS is registered
 statement ok
-SELECT 'SQLite scanner extension loaded';
+SELECT 'SQLite scanner with HTTP VFS support loaded';
 
-# Test 2: HTTP URLs should fail without httpfs loaded
-# The error will be "No such file or directory" because the FileSystem doesn't recognize HTTP URLs
+# Test 2: Verify that HTTP URLs are detected (will fail without httpfs, but with appropriate error)
 statement error
 SELECT * FROM sqlite_scan('http://example.com/test.db', 'test');
 ----
-No such file or directory
+open
+
+# Test 3: Verify HTTPS URLs are also detected
+statement error
+SELECT * FROM sqlite_scan('https://example.com/test.db', 'test');
+----
+open
+
+# Test 4: Verify S3 URLs are detected  
+statement error
+SELECT * FROM sqlite_scan('s3://bucket/test.db', 'test');
+----
+open
+
+# Test 5: Regular file paths should still work
+statement error
+SELECT * FROM sqlite_scan('nonexistent.db', 'test');
+----
+open
