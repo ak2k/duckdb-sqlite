@@ -9,7 +9,7 @@
 #include "sqlite_scanner_extension.hpp"
 
 #include "duckdb/catalog/catalog.hpp"
-#include "duckdb/main/extension_util.hpp"
+#include "duckdb/main/extension/extension_loader.hpp"
 #include "duckdb/parser/parsed_data/create_table_function_info.hpp"
 
 using namespace duckdb;
@@ -20,16 +20,17 @@ static void SetSqliteDebugQueryPrint(ClientContext &context, SetScope scope, Val
 	SQLiteDB::DebugSetPrintQueries(BooleanValue::Get(parameter));
 }
 
-static void LoadInternal(DatabaseInstance &db) {
+static void LoadInternal(ExtensionLoader &loader) {
 	SqliteScanFunction sqlite_fun;
-	ExtensionUtil::RegisterFunction(db, sqlite_fun);
+	loader.RegisterFunction(sqlite_fun);
 
 	SqliteAttachFunction attach_func;
-	ExtensionUtil::RegisterFunction(db, attach_func);
+	loader.RegisterFunction(attach_func);
 
 	SQLiteQueryFunction query_func;
-	ExtensionUtil::RegisterFunction(db, query_func);
+	loader.RegisterFunction(query_func);
 
+	auto &db = loader.GetDatabaseInstance();
 	auto &config = DBConfig::GetConfig(db);
 	config.AddExtensionOption("sqlite_all_varchar", "Load all SQLite columns as VARCHAR columns", LogicalType::BOOLEAN);
 
@@ -39,12 +40,17 @@ static void LoadInternal(DatabaseInstance &db) {
 	config.storage_extensions["sqlite_scanner"] = make_uniq<SQLiteStorageExtension>();
 }
 
-void SqliteScannerExtension::Load(DuckDB &db) {
-	LoadInternal(*db.instance);
+void SqliteScannerExtension::Load(ExtensionLoader &loader) {
+	LoadInternal(loader);
 }
 
 DUCKDB_EXTENSION_API void sqlite_scanner_init(duckdb::DatabaseInstance &db) {
-	LoadInternal(db);
+	ExtensionLoader loader(db, "sqlite_scanner");
+	LoadInternal(loader);
+}
+
+DUCKDB_EXTENSION_API void sqlite_scanner_duckdb_cpp_init(duckdb::DatabaseInstance &db) {
+	sqlite_scanner_init(db);
 }
 
 DUCKDB_EXTENSION_API const char *sqlite_scanner_version() {

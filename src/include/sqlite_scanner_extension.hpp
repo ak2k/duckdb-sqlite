@@ -5,6 +5,7 @@
 
 #include "duckdb/catalog/catalog.hpp"
 #include "duckdb/parser/parsed_data/create_table_function_info.hpp"
+#include "duckdb/main/extension/extension_loader.hpp"
 
 using namespace duckdb;
 
@@ -13,7 +14,7 @@ public:
 	std::string Name() override {
 		return "sqlite_scanner";
 	}
-	void Load(DuckDB &db) override;
+	void Load(ExtensionLoader &db) override;
 };
 
 extern "C" {
