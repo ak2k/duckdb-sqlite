@@ -6,6 +6,8 @@
 #include "duckdb/parser/parser.hpp"
 #include "sqlite_db.hpp"
 #include "sqlite_stmt.hpp"
+#include "sqlite_http_vfs.hpp"
+#include "duckdb/main/client_context.hpp"
 
 namespace duckdb {
 
@@ -63,6 +65,45 @@ SQLiteDB SQLiteDB::Open(const string &path, const SQLiteOpenOptions &options, bo
 		result.Execute("PRAGMA journal_mode=" + KeywordHelper::EscapeQuotes(options.journal_mode, '\''));
 	}
 	return result;
+}
+
+SQLiteDB SQLiteDB::Open(const string &path, const SQLiteOpenOptions &options, ClientContext &context, bool is_shared) {
+	// Check if this is an HTTP path
+	if (SqliteHttpVFS::IsHTTPPath(path)) {
+		// Register the HTTP VFS if needed
+		SqliteHttpVFS::Register(context);
+		
+		// Open with HTTP VFS
+		SQLiteDB result;
+		int flags = SQLITE_OPEN_PRIVATECACHE | SQLITE_OPEN_READONLY;
+		if (!is_shared) {
+			flags |= SQLITE_OPEN_NOMUTEX;
+		}
+		flags |= SQLITE_OPEN_EXRESCODE;
+		
+		auto rc = sqlite3_open_v2(path.c_str(), &result.db, flags, SqliteHttpVFS::GetVFSName());
+		if (rc != SQLITE_OK) {
+			throw std::runtime_error("Unable to open HTTP database \"" + path + "\": " + string(sqlite3_errstr(rc)));
+		}
+		
+		// Apply busy timeout if specified
+		if (options.busy_timeout > 0) {
+			if (options.busy_timeout > NumericLimits<int>::Maximum()) {
+				throw std::runtime_error("busy_timeout out of range - must be within "
+				                         "valid range for type int");
+			}
+			rc = sqlite3_busy_timeout(result.db, int(options.busy_timeout));
+			if (rc != SQLITE_OK) {
+				throw std::runtime_error("Failed to set busy timeout");
+			}
+		}
+		
+		// HTTP databases are always read-only, so we can skip journal mode
+		return result;
+	} else {
+		// Regular file path - use normal open
+		return Open(path, options, is_shared);
+	}
 }
 
 bool SQLiteDB::TryPrepare(const string &query, SQLiteStatement &stmt) {

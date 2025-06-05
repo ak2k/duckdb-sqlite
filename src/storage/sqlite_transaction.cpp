@@ -19,10 +19,10 @@ SQLiteTransaction::SQLiteTransaction(SQLiteCatalog &sqlite_catalog, TransactionM
     : Transaction(manager, context), sqlite_catalog(sqlite_catalog) {
 	if (sqlite_catalog.InMemory()) {
 		// in-memory database - get a reference to the in-memory connection
-		db = sqlite_catalog.GetInMemoryDatabase();
+		db = sqlite_catalog.GetInMemoryDatabase(context);
 	} else {
 		// on-disk database - open a new database connection
-		owned_db = SQLiteDB::Open(sqlite_catalog.path, sqlite_catalog.options, true);
+		owned_db = SQLiteDB::Open(sqlite_catalog.path, sqlite_catalog.options, context, true);
 		db = &owned_db;
 	}
 }

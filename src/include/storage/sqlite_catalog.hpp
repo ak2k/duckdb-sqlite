@@ -59,7 +59,7 @@ public:
 	string GetDBPath() override;
 
 	//! Returns a reference to the in-memory database (if any)
-	SQLiteDB *GetInMemoryDatabase();
+	SQLiteDB *GetInMemoryDatabase(ClientContext &context);
 	//! Release the in-memory database (if there is any)
 	void ReleaseInMemoryDatabase();
 
@@ -76,6 +76,8 @@ private:
 	mutex in_memory_lock;
 	//! Whether or not there is any active transaction on the in-memory database
 	bool active_in_memory;
+	//! Whether the in-memory database has been initialized
+	bool in_memory_db_initialized;
 };
 
 } // namespace duckdb
