@@ -4,11 +4,6 @@
 
 require sqlite_scanner
 
-require httpfs
-
-# This test requires network access to external resources
-require-env SQLITE_HTTP_TEST_ENABLED 1
-
 # Install and load httpfs for HTTP support
 statement ok
 INSTALL httpfs;
