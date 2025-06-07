@@ -79,7 +79,7 @@ BufferHandle DuckDBCachedFile::TryGetCachedRange(idx_t offset, idx_t amount) {
 				try {
 					return cache.GetBufferManager().Pin(range->block_handle);
 				} catch (...) {
-					// If pinning fails, remove this range from cache
+					// If pinning fails, continue to next range
 					continue;
 				}
 			}
