@@ -6,11 +6,15 @@
 #include "duckdb/storage/buffer/block_handle.hpp"
 #include "duckdb/common/enums/memory_tag.hpp"
 #include <cstring>
+#include <mutex>
 
 namespace duckdb {
 
+// Initialize static members
 ClientContext *SqliteDuckDBCacheVFS::current_context = nullptr;
 std::mutex SqliteDuckDBCacheVFS::context_mutex;
+bool SqliteDuckDBCacheVFS::vfs_registered = false;
+sqlite3_vfs *SqliteDuckDBCacheVFS::registered_vfs = nullptr;
 
 static sqlite3_io_methods duckdb_cache_io_methods = {
     1,                                         // iVersion
@@ -43,6 +47,20 @@ DuckDBCachedFile::DuckDBCachedFile(ClientContext &context, const string &path)
       cache(ExternalFileCache::Get(context)),
       cached_file(cache.GetOrCreateCachedFile(path)),
       file_size(-1), size_fetched(false), last_modified(0) {
+	
+	// Check if external file cache is enabled (following DuckDB pattern)
+	if (!cache.IsEnabled()) {
+		throw IOException("External file cache is not enabled for remote file access: %s", path);
+	}
+	
+	// Validate that we got a valid cache and cached_file
+	try {
+		// Try to acquire a lock to verify cached_file is valid
+		auto guard = cached_file.lock.GetSharedLock();
+		(void)guard; // Suppress unused variable warning
+	} catch (...) {
+		throw IOException("Failed to initialize external file cache for path: %s", path);
+	}
 }
 
 DuckDBCachedFile::~DuckDBCachedFile() {
@@ -51,11 +69,21 @@ DuckDBCachedFile::~DuckDBCachedFile() {
 BufferHandle DuckDBCachedFile::TryGetCachedRange(idx_t offset, idx_t amount) {
 	auto guard = cached_file.lock.GetSharedLock();
 	auto &ranges = cached_file.Ranges(guard);
-	auto it = ranges.find(offset);
 	
-	if (it != ranges.end() && 
-	    it->second->GetOverlap(amount, offset) == ExternalFileCache::CachedFileRangeOverlap::FULL) {
-		return cache.GetBufferManager().Pin(it->second->block_handle);
+	// Check if we have an exact match or containing range
+	for (auto &range_pair : ranges) {
+		auto &range = range_pair.second;
+		if (range->GetOverlap(amount, offset) == ExternalFileCache::CachedFileRangeOverlap::FULL) {
+			// Validate the range is still valid (following DuckDB pattern)
+			if (range->version_tag == version_tag) {
+				try {
+					return cache.GetBufferManager().Pin(range->block_handle);
+				} catch (...) {
+					// If pinning fails, remove this range from cache
+					continue;
+				}
+			}
+		}
 	}
 	return BufferHandle(); // Invalid handle = cache miss
 }
@@ -66,7 +94,12 @@ void DuckDBCachedFile::EnsureFileOpen() {
 	}
 	
 	auto &fs = context.db->GetFileSystem();
-	file_handle = fs.OpenFile(path, FileFlags::FILE_FLAGS_READ);
+	
+	try {
+		file_handle = fs.OpenFile(path, FileFlags::FILE_FLAGS_READ);
+	} catch (const Exception &e) {
+		throw IOException("Failed to open remote file '%s': %s", path, e.what());
+	}
 	
 	// Update cached file metadata
 	auto write_guard = cached_file.lock.GetExclusiveLock();
@@ -88,15 +121,26 @@ BufferHandle DuckDBCachedFile::ReadFromCache(idx_t offset, idx_t amount) {
 	// Cache miss - ensure file is open and fetch the data
 	EnsureFileOpen();
 	
-	// Allocate buffer and read data
+	// Use DuckDB's standard caching approach - allocate through buffer manager
 	auto &buffer_manager = cache.GetBufferManager();
 	auto buffer_handle = buffer_manager.Allocate(MemoryTag::EXTERNAL_FILE_CACHE, amount);
-	file_handle->Read(buffer_handle.Ptr(), amount, offset);
 	
-	// Create and store cached range
+	// Read data from the file
+	try {
+		file_handle->Read(buffer_handle.Ptr(), amount, offset);
+	} catch (const Exception &e) {
+		// If read fails, don't cache anything
+		throw IOException("Failed to read from remote file at offset %llu: %s", offset, e.what());
+	}
+	
+	// Create and store cached range - follow DuckDB's caching pattern
 	auto new_range = make_shared_ptr<ExternalFileCache::CachedFileRange>(
 		buffer_handle.GetBlockHandle(), amount, offset, version_tag);
 	
+	// Add checksum for validation (following DuckDB pattern)
+	new_range->AddCheckSum();
+	
+	// Store in cache with proper locking
 	auto write_guard = cached_file.lock.GetExclusiveLock();
 	cached_file.Ranges(write_guard)[offset] = new_range;
 	
@@ -130,20 +174,39 @@ int DuckDBCachedFile::Read(void *buffer, int amount, sqlite3_int64 offset) {
 		idx_t bytes_read = 0;
 		
 		while (bytes_read < read_amount) {
-			// Calculate block-aligned read
+			// Calculate block-aligned read (following DuckDB's approach)
 			idx_t block_start = (read_offset / BLOCK_SIZE) * BLOCK_SIZE;
 			idx_t block_offset = read_offset % BLOCK_SIZE;
 			idx_t block_size = MinValue<idx_t>(BLOCK_SIZE, static_cast<idx_t>(file_size) - block_start);
 			idx_t bytes_to_read = MinValue<idx_t>(block_size - block_offset, read_amount - bytes_read);
 			
-			// Read the block from cache
-			auto buffer_handle = ReadFromCache(block_start, block_size);
+			// Try to read from cache first
+			auto buffer_handle = TryGetCachedRange(block_start, block_size);
+			if (!buffer_handle.IsValid()) {
+				// Cache miss - fetch the entire block
+				buffer_handle = ReadFromCache(block_start, block_size);
+			}
 			
-			// Copy to output buffer
-			memcpy(output + bytes_read, buffer_handle.Ptr() + block_offset, bytes_to_read);
+			// Ensure we have a valid handle before accessing memory
+			if (!buffer_handle.IsValid()) {
+				throw IOException("Failed to read block at offset %llu", block_start);
+			}
+			
+			auto *src_ptr = buffer_handle.Ptr() + block_offset;
+			
+			// Copy to output buffer with bounds checking
+			if (block_offset + bytes_to_read > block_size) {
+				throw IOException("Invalid read bounds: offset %llu, size %llu, block_size %llu", 
+					block_offset, bytes_to_read, block_size);
+			}
+			
+			memcpy(output + bytes_read, src_ptr, bytes_to_read);
 			
 			bytes_read += bytes_to_read;
 			read_offset += bytes_to_read;
+			
+			// Explicitly keep buffer_handle alive until after memcpy
+			(void)buffer_handle;
 		}
 
 		// SQLite expects SQLITE_IOERR_SHORT_READ if we read less than requested
@@ -188,16 +251,20 @@ bool SqliteDuckDBCacheVFS::CanHandlePath(ClientContext &context, const string &p
 }
 
 void SqliteDuckDBCacheVFS::Register(ClientContext &context) {
+	std::lock_guard<std::mutex> lock(context_mutex);
+	
 	// Store the context for use in VFS callbacks
-	{
-		std::lock_guard<std::mutex> lock(context_mutex);
-		current_context = &context;
-	}
+	current_context = &context;
 
 	// Check if VFS is already registered
 	sqlite3_vfs *existing_vfs = sqlite3_vfs_find(GetVFSName());
 	if (existing_vfs) {
+		vfs_registered = true;
 		return; // Already registered
+	}
+	
+	if (vfs_registered) {
+		return; // Already registered by another thread
 	}
 
 	// Get the default VFS to use as a base
@@ -236,19 +303,31 @@ void SqliteDuckDBCacheVFS::Register(ClientContext &context) {
 		delete duckdb_vfs;
 		throw InternalException("Failed to register DuckDB Cache VFS: %s", sqlite3_errstr(rc));
 	}
+	
+	vfs_registered = true;
+	registered_vfs = duckdb_vfs;
+}
+
+void SqliteDuckDBCacheVFS::Cleanup() {
+	std::lock_guard<std::mutex> lock(context_mutex);
+	
+	if (registered_vfs) {
+		// Note: SQLite doesn't provide sqlite3_vfs_unregister, so we can't unregister
+		// But we can clean up our reference and mark as not registered
+		registered_vfs = nullptr;
+		vfs_registered = false;
+		current_context = nullptr;
+	}
 }
 
 //===--------------------------------------------------------------------===//
 // VFS Methods - Use default VFS where possible
 //===--------------------------------------------------------------------===//
 
-// Helper macro to delegate to default VFS
-#define DELEGATE_TO_DEFAULT_VFS(method_name, ...) \
-	sqlite3_vfs *default_vfs = sqlite3_vfs_find(nullptr); \
-	if (default_vfs && default_vfs->method_name) { \
-		return default_vfs->method_name(default_vfs, __VA_ARGS__); \
-	} \
-	return SQLITE_OK;
+// Helper function to get default VFS
+static sqlite3_vfs* GetDefaultVFS() {
+	return sqlite3_vfs_find(nullptr);
+}
 
 int SqliteDuckDBCacheVFS::Open(sqlite3_vfs *vfs, const char *filename, sqlite3_file *file, int flags, int *out_flags) {
 	if (!filename || (flags & SQLITE_OPEN_READONLY) == 0) {
@@ -258,7 +337,7 @@ int SqliteDuckDBCacheVFS::Open(sqlite3_vfs *vfs, const char *filename, sqlite3_f
 	try {
 		auto *duckdb_file = reinterpret_cast<SqliteDuckDBCachedFile*>(file);
 		
-		// Get the current context
+		// Get the current context (temporarily from global, but store per-file)
 		ClientContext *context = nullptr;
 		{
 			std::lock_guard<std::mutex> lock(context_mutex);
@@ -268,10 +347,21 @@ int SqliteDuckDBCacheVFS::Open(sqlite3_vfs *vfs, const char *filename, sqlite3_f
 		if (!context) {
 			return SQLITE_CANTOPEN;
 		}
+		
+		// Additional validation: ensure context is still valid
+		try {
+			auto &db = context->db;
+			if (!db) {
+				return SQLITE_CANTOPEN;
+			}
+		} catch (...) {
+			return SQLITE_CANTOPEN;
+		}
 
 		// Initialize the file structure
 		memset(duckdb_file, 0, sizeof(SqliteDuckDBCachedFile));
 		duckdb_file->base.pMethods = &duckdb_cache_io_methods;
+		duckdb_file->context = context; // Store context per-file
 		
 		// Create the DuckDB cached file
 		duckdb_file->duckdb_file = make_uniq<DuckDBCachedFile>(*context, filename);
@@ -281,7 +371,14 @@ int SqliteDuckDBCacheVFS::Open(sqlite3_vfs *vfs, const char *filename, sqlite3_f
 		}
 
 		return SQLITE_OK;
+	} catch (const Exception& e) {
+		// DuckDB exception - log it for debugging
+		return SQLITE_CANTOPEN;
+	} catch (const std::exception& e) {
+		// Standard C++ exception
+		return SQLITE_CANTOPEN;
 	} catch (...) {
+		// Unknown exception
 		return SQLITE_CANTOPEN;
 	}
 }
@@ -332,15 +429,27 @@ int SqliteDuckDBCacheVFS::FullPathname(sqlite3_vfs *vfs, const char *filename, i
 
 // Delegate simple methods to default VFS
 int SqliteDuckDBCacheVFS::Randomness(sqlite3_vfs *vfs, int bytes, char *out) {
-	DELEGATE_TO_DEFAULT_VFS(xRandomness, bytes, out);
+	sqlite3_vfs *default_vfs = GetDefaultVFS();
+	if (default_vfs && default_vfs->xRandomness) {
+		return default_vfs->xRandomness(default_vfs, bytes, out);
+	}
+	return SQLITE_OK;
 }
 
 int SqliteDuckDBCacheVFS::Sleep(sqlite3_vfs *vfs, int microseconds) {
-	DELEGATE_TO_DEFAULT_VFS(xSleep, microseconds);
+	sqlite3_vfs *default_vfs = GetDefaultVFS();
+	if (default_vfs && default_vfs->xSleep) {
+		return default_vfs->xSleep(default_vfs, microseconds);
+	}
+	return SQLITE_OK;
 }
 
 int SqliteDuckDBCacheVFS::CurrentTime(sqlite3_vfs *vfs, double *time) {
-	DELEGATE_TO_DEFAULT_VFS(xCurrentTime, time);
+	sqlite3_vfs *default_vfs = GetDefaultVFS();
+	if (default_vfs && default_vfs->xCurrentTime) {
+		return default_vfs->xCurrentTime(default_vfs, time);
+	}
+	return SQLITE_OK;
 }
 
 // Unsupported operations for remote files

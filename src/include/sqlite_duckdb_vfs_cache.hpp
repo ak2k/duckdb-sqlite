@@ -67,6 +67,8 @@ public:
 	static void Register(ClientContext &context);
 	//! Check if DuckDB can handle this path
 	static bool CanHandlePath(ClientContext &context, const string &path);
+	//! Clean up VFS registration (for proper shutdown)
+	static void Cleanup();
 	//! Get the VFS name
 	static const char *GetVFSName() { return "duckdb_cache_fs"; }
 
@@ -101,12 +103,15 @@ public:
 private:
 	static ClientContext *current_context;
 	static std::mutex context_mutex;
+	static bool vfs_registered;
+	static sqlite3_vfs *registered_vfs;
 };
 
 //! SQLite file structure for DuckDB cached files
 struct SqliteDuckDBCachedFile {
 	sqlite3_file base;  // Must be first
 	unique_ptr<DuckDBCachedFile> duckdb_file;
+	ClientContext *context; // Store context per-file instead of globally
 };
 
 } // namespace duckdb
