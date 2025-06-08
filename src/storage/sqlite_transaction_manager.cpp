@@ -9,10 +9,16 @@ SQLiteTransactionManager::SQLiteTransactionManager(AttachedDatabase &db_p, SQLit
 
 Transaction &SQLiteTransactionManager::StartTransaction(ClientContext &context) {
 	auto transaction = make_uniq<SQLiteTransaction>(sqlite_catalog, *this, context);
-	transaction->Start();
+	
+	// CRITICAL FIX: Do NOT call Start() here to avoid deadlock
+	// Start() will trigger lazy DB connection which can block for remote files
+	// Defer Start() until the transaction is actually used (in GetDB())
+	// This prevents blocking while MetaTransaction lock is held
+	
 	auto &result = *transaction;
 	lock_guard<mutex> l(transaction_lock);
 	transactions[result] = std::move(transaction);
+	
 	return result;
 }
 

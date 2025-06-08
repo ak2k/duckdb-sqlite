@@ -16,15 +16,11 @@
 namespace duckdb {
 
 SQLiteTransaction::SQLiteTransaction(SQLiteCatalog &sqlite_catalog, TransactionManager &manager, ClientContext &context)
-    : Transaction(manager, context), sqlite_catalog(sqlite_catalog) {
-	if (sqlite_catalog.InMemory()) {
-		// in-memory database - get a reference to the in-memory connection
-		db = sqlite_catalog.GetInMemoryDatabase(context);
-	} else {
-		// on-disk database - open a new database connection
-		owned_db = SQLiteDB::Open(sqlite_catalog.path, sqlite_catalog.options, context, true);
-		db = &owned_db;
-	}
+    : Transaction(manager, context), sqlite_catalog(sqlite_catalog), db(nullptr), started(false) {
+	// CRITICAL FIX: Defer database connection AND transaction start to avoid deadlock
+	// Opening SQLite connections + starting transactions for remote files while holding 
+	// MetaTransaction lock can cause deadlocks due to HTTP requests and caching operations.
+	// Instead, we'll open the connection and start the transaction lazily when GetDB() is first called.
 }
 
 SQLiteTransaction::~SQLiteTransaction() {
@@ -32,16 +28,35 @@ SQLiteTransaction::~SQLiteTransaction() {
 }
 
 void SQLiteTransaction::Start() {
-	db->Execute("BEGIN TRANSACTION");
+	if (!started) {
+		GetDB(); // This will handle both connection and transaction start
+	}
 }
 void SQLiteTransaction::Commit() {
-	db->Execute("COMMIT");
+	GetDB().Execute("COMMIT");
 }
 void SQLiteTransaction::Rollback() {
-	db->Execute("ROLLBACK");
+	GetDB().Execute("ROLLBACK");
 }
 
 SQLiteDB &SQLiteTransaction::GetDB() {
+	if (!db) {
+		if (sqlite_catalog.InMemory()) {
+			// in-memory database - get a reference to the in-memory connection
+			db = sqlite_catalog.GetInMemoryDatabase(*context.lock());
+		} else {
+			// on-disk/remote database - open a new database connection
+			owned_db = SQLiteDB::Open(sqlite_catalog.path, sqlite_catalog.options, *context.lock(), true);
+			db = &owned_db;
+		}
+	}
+	
+	// Also handle deferred transaction start
+	if (!started) {
+		db->Execute("BEGIN TRANSACTION");
+		started = true;
+	}
+	
 	return *db;
 }
 
@@ -111,7 +126,7 @@ optional_ptr<CatalogEntry> SQLiteTransaction::GetCatalogEntry(const string &entr
 		return entry->second.get();
 	}
 	// catalog entry not found - look up table in main SQLite database
-	auto type = db->GetEntryType(entry_name);
+	auto type = GetDB().GetEntryType(entry_name);
 	if (type == CatalogType::INVALID) {
 		// no table or view found
 		return nullptr;
@@ -125,7 +140,7 @@ optional_ptr<CatalogEntry> SQLiteTransaction::GetCatalogEntry(const string &entr
 		if (context.lock()->TryGetCurrentSetting("sqlite_all_varchar", sqlite_all_varchar)) {
 			all_varchar = BooleanValue::Get(sqlite_all_varchar);
 		}
-		db->GetTableInfo(entry_name, info.columns, info.constraints, all_varchar);
+		GetDB().GetTableInfo(entry_name, info.columns, info.constraints, all_varchar);
 		D_ASSERT(!info.columns.empty());
 
 		result = make_uniq<SQLiteTableEntry>(sqlite_catalog, sqlite_catalog.GetMainSchema(), info, all_varchar);
@@ -133,7 +148,7 @@ optional_ptr<CatalogEntry> SQLiteTransaction::GetCatalogEntry(const string &entr
 	}
 	case CatalogType::VIEW_ENTRY: {
 		string sql;
-		db->GetViewInfo(entry_name, sql);
+		GetDB().GetViewInfo(entry_name, sql);
 
 		unique_ptr<CreateViewInfo> view_info;
 		try {
@@ -153,7 +168,7 @@ optional_ptr<CatalogEntry> SQLiteTransaction::GetCatalogEntry(const string &entr
 	case CatalogType::INDEX_ENTRY: {
 		string table_name;
 		string sql;
-		db->GetIndexInfo(entry_name, sql, table_name);
+		GetDB().GetIndexInfo(entry_name, sql, table_name);
 		if (sql.empty()) {
 			throw InternalException("SQL is empty");
 		}
@@ -200,7 +215,7 @@ string GetDropSQL(CatalogType type, const string &table_name, bool cascade) {
 
 void SQLiteTransaction::DropEntry(CatalogType type, const string &table_name, bool cascade) {
 	catalog_entries.erase(table_name);
-	db->Execute(GetDropSQL(type, table_name, cascade));
+	GetDB().Execute(GetDropSQL(type, table_name, cascade));
 }
 
 } // namespace duckdb

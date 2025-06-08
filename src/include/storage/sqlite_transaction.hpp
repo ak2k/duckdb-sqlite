@@ -37,6 +37,7 @@ private:
 	SQLiteDB *db;
 	SQLiteDB owned_db;
 	case_insensitive_map_t<unique_ptr<CatalogEntry>> catalog_entries;
+	bool started;
 };
 
 } // namespace duckdb
