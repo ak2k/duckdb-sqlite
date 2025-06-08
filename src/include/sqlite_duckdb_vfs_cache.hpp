@@ -37,10 +37,12 @@ public:
 private:
 	string path;
 	unique_ptr<CachingFileHandle> caching_handle;
+	unique_ptr<FileHandle> base_handle;  // Direct filesystem handle for testing
+	sqlite3_int64 cached_file_size;  // Cache file size to avoid repeated calls
 };
 
 // SQLite VFS implementation for remote file access through DuckDB
-class SqliteDuckDBCacheVFS {
+class SQLiteDuckDBCacheVFS {
 public:
 	//! Register the cached DuckDB VFS with SQLite
 	static void Register(ClientContext &context);
@@ -82,7 +84,7 @@ private:
 };
 
 //! SQLite file structure for DuckDB cached files
-struct SqliteDuckDBCachedFile {
+struct SQLiteDuckDBCachedFile {
 	sqlite3_file base;  // Must be first
 	unique_ptr<DuckDBCachedFile> duckdb_file;
 	ClientContext *context; // Context for this file handle

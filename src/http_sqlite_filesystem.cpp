@@ -11,9 +11,7 @@
 #include "duckdb/main/database.hpp"
 #include "duckdb/common/exception.hpp"
 #include "duckdb/common/file_open_flags.hpp"
-#include "duckdb/storage/buffer_manager.hpp"
 #include "duckdb/common/file_opener.hpp"
-#include "duckdb/common/string_util.hpp"
 #include <cstring>
 
 // Thread-local flag to prevent infinite recursion
@@ -22,10 +20,10 @@ thread_local bool http_sqlite_opening = false;
 namespace duckdb {
 
 //===--------------------------------------------------------------------===//
-// HttpSqliteFileSystem
+// HttpSQLiteFileSystem
 //===--------------------------------------------------------------------===//
 
-bool HttpSqliteFileSystem::CanHandleFile(const string &path) {
+bool HttpSQLiteFileSystem::CanHandleFile(const string &path) {
 	// CRITICAL: Only handle files when explicitly called from our VFS
 	// This prevents infinite recursion and lets httpfs handle direct HTTP access
 	if (!http_sqlite_opening) {
@@ -41,21 +39,21 @@ bool HttpSqliteFileSystem::CanHandleFile(const string &path) {
 	return true;
 }
 
-unique_ptr<FileHandle> HttpSqliteFileSystem::OpenFile(const string &path, FileOpenFlags flags,
+unique_ptr<FileHandle> HttpSQLiteFileSystem::OpenFile(const string &path, FileOpenFlags flags,
                                                       optional_ptr<FileOpener> opener) {
 	// Delegate to extended interface
 	OpenFileInfo file_info(path);
 	return OpenFileExtended(file_info, flags, opener);
 }
 
-unique_ptr<FileHandle> HttpSqliteFileSystem::OpenFileExtended(const OpenFileInfo &file, FileOpenFlags flags,
+unique_ptr<FileHandle> HttpSQLiteFileSystem::OpenFileExtended(const OpenFileInfo &file, FileOpenFlags flags,
                                                               optional_ptr<FileOpener> opener) {
 	if (!CanHandleFile(file.path)) {
-		throw InvalidInputException("HttpSqliteFileSystem cannot handle file: %s", file.path);
+		throw InvalidInputException("HttpSQLiteFileSystem cannot handle file: %s", file.path);
 	}
 	
 	if (flags.OpenForWriting() || flags.OpenForAppending()) {
-		throw InvalidInputException("HttpSqliteFileSystem only supports read-only access");
+		throw InvalidInputException("HttpSQLiteFileSystem only supports read-only access");
 	}
 	
 	// Extract ClientContext from FileOpener
@@ -65,7 +63,7 @@ unique_ptr<FileHandle> HttpSqliteFileSystem::OpenFileExtended(const OpenFileInfo
 	}
 	
 	if (!context) {
-		throw InvalidInputException("HttpSqliteFileSystem requires ClientContext for file: %s", file.path);
+		throw InvalidInputException("HttpSQLiteFileSystem requires ClientContext for file: %s", file.path);
 	}
 	
 	// RAII guard to automatically manage flag state
@@ -77,23 +75,23 @@ unique_ptr<FileHandle> HttpSqliteFileSystem::OpenFileExtended(const OpenFileInfo
 	
 	// Set flag to prevent recursion when creating cached file
 	FlagGuard guard(http_sqlite_opening);
-	return make_uniq<HttpSqliteFileHandle>(*this, file.path, context);
+	return make_uniq<HttpSQLiteFileHandle>(*this, file.path, context);
 }
 
-int64_t HttpSqliteFileSystem::GetFileSize(FileHandle &handle) {
-	auto &sqlite_handle = handle.Cast<HttpSqliteFileHandle>();
+int64_t HttpSQLiteFileSystem::GetFileSize(FileHandle &handle) {
+	auto &sqlite_handle = handle.Cast<HttpSQLiteFileHandle>();
 	auto caching_handle = sqlite_handle.GetCachingHandle();
 	if (!caching_handle) {
-		throw InternalException("HttpSqliteFileHandle has no caching handle");
+		throw InternalException("HttpSQLiteFileHandle has no caching handle");
 	}
 	return caching_handle->GetFileSize();
 }
 
-void HttpSqliteFileSystem::Read(FileHandle &handle, void *buffer, int64_t nr_bytes, idx_t location) {
-	auto &sqlite_handle = handle.Cast<HttpSqliteFileHandle>();
+void HttpSQLiteFileSystem::Read(FileHandle &handle, void *buffer, int64_t nr_bytes, idx_t location) {
+	auto &sqlite_handle = handle.Cast<HttpSQLiteFileHandle>();
 	auto caching_handle = sqlite_handle.GetCachingHandle();
 	if (!caching_handle) {
-		throw InternalException("HttpSqliteFileHandle has no caching handle");
+		throw InternalException("HttpSQLiteFileHandle has no caching handle");
 	}
 	
 	// Use DuckDB's caching read API
@@ -102,7 +100,7 @@ void HttpSqliteFileSystem::Read(FileHandle &handle, void *buffer, int64_t nr_byt
 	memcpy(buffer, read_buffer, nr_bytes);
 }
 
-bool HttpSqliteFileSystem::FileExists(const string &filename, optional_ptr<FileOpener> opener) {
+bool HttpSQLiteFileSystem::FileExists(const string &filename, optional_ptr<FileOpener> opener) {
 	if (!CanHandleFile(filename)) {
 		return false;
 	}
@@ -111,21 +109,21 @@ bool HttpSqliteFileSystem::FileExists(const string &filename, optional_ptr<FileO
 	return FileSystem::IsRemoteFile(filename);
 }
 
-void HttpSqliteFileSystem::Register(DatabaseInstance &db) {
+void HttpSQLiteFileSystem::Register(DatabaseInstance &db) {
 	// Register HTTP SQLite filesystem as subsystem
 	auto &fs = db.GetFileSystem();
-	fs.RegisterSubSystem(make_uniq<HttpSqliteFileSystem>());
+	fs.RegisterSubSystem(make_uniq<HttpSQLiteFileSystem>());
 }
 
 //===--------------------------------------------------------------------===//
-// HttpSqliteFileHandle
+// HttpSQLiteFileHandle
 //===--------------------------------------------------------------------===//
 
-HttpSqliteFileHandle::HttpSqliteFileHandle(FileSystem &fs, const string &path, ClientContext *context)
+HttpSQLiteFileHandle::HttpSQLiteFileHandle(FileSystem &fs, const string &path, ClientContext *context)
     : FileHandle(fs, path, FileOpenFlags::FILE_FLAGS_READ), context(context) {
 	
 	if (!context) {
-		throw InternalException("HttpSqliteFileHandle requires valid ClientContext");
+		throw InternalException("HttpSQLiteFileHandle requires valid ClientContext");
 	}
 	
 	// Use CachingFileSystem directly with httpfs (no DuckDBCachedFile wrapper)
@@ -148,7 +146,7 @@ HttpSqliteFileHandle::HttpSqliteFileHandle(FileSystem &fs, const string &path, C
 	ValidateSQLiteHeader();
 }
 
-void HttpSqliteFileHandle::ValidateSQLiteHeader() {
+void HttpSQLiteFileHandle::ValidateSQLiteHeader() {
 	// SQLite format validation per https://www.sqlite.org/fileformat.html
 	constexpr char SQLITE_HEADER[] = "SQLite format 3\000";
 	constexpr size_t SQLITE_HEADER_SIZE = 16;
@@ -161,7 +159,7 @@ void HttpSqliteFileHandle::ValidateSQLiteHeader() {
 	}
 }
 
-void HttpSqliteFileHandle::Close() {
+void HttpSQLiteFileHandle::Close() {
 	// Release caching handle resources
 	caching_handle.reset();
 }

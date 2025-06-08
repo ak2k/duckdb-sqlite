@@ -20,7 +20,7 @@ namespace duckdb {
 
 //! FileSystem implementation for HTTP SQLite databases
 //! Provides DuckDB FileSystem interface for remote SQLite files
-class HttpSqliteFileSystem : public FileSystem {
+class HttpSQLiteFileSystem : public FileSystem {
 public:
 	//! Check if this filesystem can handle the given path
 	bool CanHandleFile(const string &path) override;
@@ -44,7 +44,7 @@ public:
 	bool FileExists(const string &filename, optional_ptr<FileOpener> opener = nullptr) override;
 	
 	//! Get filesystem name for debugging
-	string GetName() const override { return "HttpSqliteFileSystem"; }
+	string GetName() const override { return "HttpSQLiteFileSystem"; }
 	
 	//! Register this filesystem with DuckDB
 	static void Register(DatabaseInstance &db);
@@ -56,16 +56,16 @@ private:
 };
 
 //! FileHandle implementation for HTTP SQLite files
-class HttpSqliteFileHandle : public FileHandle {
+class HttpSQLiteFileHandle : public FileHandle {
 public:
-	HttpSqliteFileHandle(FileSystem &fs, const string &path, 
+	HttpSQLiteFileHandle(FileSystem &fs, const string &path, 
 	                     ClientContext *context);
 	
 	//! Close the file handle
 	void Close() override;
 	
-	//! Get the underlying cached file
-	DuckDBCachedFile* GetCachedFile() { return cached_file.get(); }
+	//! Get the underlying caching handle
+	CachingFileHandle* GetCachingHandle() { return caching_handle.get(); }
 
 private:
 	//! Validate that the file has a proper SQLite header
@@ -73,8 +73,8 @@ private:
 	
 	//! ClientContext for this file handle
 	ClientContext *context;
-	//! Cached file implementation
-	unique_ptr<DuckDBCachedFile> cached_file;
+	//! DuckDB caching file handle
+	unique_ptr<CachingFileHandle> caching_handle;
 };
 
 } // namespace duckdb

@@ -10,6 +10,7 @@
 
 #include "duckdb/transaction/transaction.hpp"
 #include "duckdb/common/case_insensitive_map.hpp"
+#include "duckdb/common/mutex.hpp"
 #include "sqlite_db.hpp"
 
 namespace duckdb {
@@ -38,6 +39,7 @@ private:
 	SQLiteDB owned_db;
 	case_insensitive_map_t<unique_ptr<CatalogEntry>> catalog_entries;
 	bool started;
+	mutable mutex initialization_mutex;
 };
 
 } // namespace duckdb

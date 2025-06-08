@@ -12,19 +12,19 @@ SELECT 'SQLite scanner with HTTP VFS support loaded';
 statement error
 SELECT * FROM sqlite_scan('http://example.com/test.db', 'test');
 ----
-open
+Cannot open file
 
 # Test 3: Verify HTTPS URLs are also detected
 statement error
 SELECT * FROM sqlite_scan('https://example.com/test.db', 'test');
 ----
-open
+Cannot open file
 
 # Test 4: Verify S3 URLs are detected  
 statement error
 SELECT * FROM sqlite_scan('s3://bucket/test.db', 'test');
 ----
-open
+Cannot open file
 
 # Test 5: Regular file paths should still work
 statement error

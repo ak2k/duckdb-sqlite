@@ -4,6 +4,9 @@
 #include "duckdb/storage/table_storage_info.hpp"
 #include "duckdb/parser/column_list.hpp"
 #include "duckdb/parser/parser.hpp"
+#include "duckdb/common/exception.hpp"
+#include "duckdb/common/exception/http_exception.hpp"
+#include "duckdb/common/file_open_flags.hpp"
 #include "sqlite_db.hpp"
 #include "sqlite_stmt.hpp"
 #include "sqlite_duckdb_vfs_cache.hpp"
@@ -48,17 +51,16 @@ SQLiteDB SQLiteDB::Open(const string &path, const SQLiteOpenOptions &options, bo
 	flags |= SQLITE_OPEN_EXRESCODE;
 	auto rc = sqlite3_open_v2(path.c_str(), &result.db, flags, nullptr);
 	if (rc != SQLITE_OK) {
-		throw std::runtime_error("Unable to open database \"" + path + "\": " + string(sqlite3_errstr(rc)));
+		throw ConnectionException("Unable to open database \"%s\": %s", path, sqlite3_errstr(rc));
 	}
 	// default busy time-out of 5 seconds
 	if (options.busy_timeout > 0) {
 		if (options.busy_timeout > NumericLimits<int>::Maximum()) {
-			throw std::runtime_error("busy_timeout out of range - must be within "
-			                         "valid range for type int");
+			throw BinderException("busy_timeout out of range - must be within valid range for type int");
 		}
 		rc = sqlite3_busy_timeout(result.db, int(options.busy_timeout));
 		if (rc != SQLITE_OK) {
-			throw std::runtime_error("Failed to set busy timeout");
+			throw ConnectionException("Failed to set busy timeout: %s", sqlite3_errmsg(result.db));
 		}
 	}
 	if (!options.journal_mode.empty()) {
@@ -70,8 +72,10 @@ SQLiteDB SQLiteDB::Open(const string &path, const SQLiteOpenOptions &options, bo
 SQLiteDB SQLiteDB::Open(const string &path, const SQLiteOpenOptions &options, ClientContext &context, bool is_shared) {
 	// Handle remote SQLite databases via VFS for efficient block-level access
 	if (FileSystem::IsRemoteFile(path)) {
-		if (SqliteDuckDBCacheVFS::CanHandlePath(context, path)) {
-			SqliteDuckDBCacheVFS::Register(context);
+		if (SQLiteDuckDBCacheVFS::CanHandlePath(context, path)) {
+			// Let DuckDB's CachingFileSystem handle remote file validation naturally
+			// This leverages DuckDB's robust error handling for all remote protocols
+			SQLiteDuckDBCacheVFS::Register(context);
 			SQLiteDB result;
 			int flags = SQLITE_OPEN_PRIVATECACHE | SQLITE_OPEN_READONLY;
 			if (!is_shared) {
@@ -79,20 +83,35 @@ SQLiteDB SQLiteDB::Open(const string &path, const SQLiteOpenOptions &options, Cl
 			}
 			flags |= SQLITE_OPEN_EXRESCODE;
 			
-			auto rc = sqlite3_open_v2(path.c_str(), &result.db, flags, SqliteDuckDBCacheVFS::GetVFSName());
+			auto rc = sqlite3_open_v2(path.c_str(), &result.db, flags, SQLiteDuckDBCacheVFS::GetVFSName());
 			if (rc != SQLITE_OK) {
-				throw std::runtime_error("Unable to open database \"" + path + "\": " + string(sqlite3_errstr(rc)));
+				// For remote files, try to provide a more informative error message
+				// by attempting to access the file directly with DuckDB's filesystem
+				try {
+					// Try to access the file with DuckDB's filesystem to get the real error
+					auto &fs = context.db->GetFileSystem();
+					auto file_handle = fs.OpenFile(path, FileFlags::FILE_FLAGS_READ); // This will trigger HTTP requests
+				} catch (const HTTPException &e) {
+					throw HTTPException(e.what()); // Preserve DuckDB's HTTP error
+				} catch (const Exception &e) {
+					throw; // Just re-throw the original DuckDB exception
+				} catch (...) {
+					// Fallback to SQLite error
+					throw ConnectionException("Unable to open database \"%s\": %s", path, sqlite3_errstr(rc));
+				}
+				
+				// If no exception was thrown from OpenFile, use SQLite error  
+				throw ConnectionException("Unable to open database \"%s\": %s", path, sqlite3_errstr(rc));
 			}
 			
 			// Apply busy timeout if specified
 			if (options.busy_timeout > 0) {
 				if (options.busy_timeout > NumericLimits<int>::Maximum()) {
-					throw std::runtime_error("busy_timeout out of range - must be within "
-					                         "valid range for type int");
+					throw BinderException("busy_timeout out of range - must be within valid range for type int");
 				}
 				rc = sqlite3_busy_timeout(result.db, int(options.busy_timeout));
 				if (rc != SQLITE_OK) {
-					throw std::runtime_error("Failed to set busy timeout");
+					throw ConnectionException("Failed to set busy timeout: %s", sqlite3_errmsg(result.db));
 				}
 			}
 			
@@ -123,8 +142,7 @@ bool SQLiteDB::TryPrepare(const string &query, SQLiteStatement &stmt) {
 SQLiteStatement SQLiteDB::Prepare(const string &query) {
 	SQLiteStatement stmt;
 	if (!TryPrepare(query, stmt)) {
-		string error = "Failed to prepare query \"" + query + "\": " + string(sqlite3_errmsg(db));
-		throw std::runtime_error(error);
+		throw BinderException("Failed to prepare query \"%s\": %s", query, sqlite3_errmsg(db));
 	}
 	return stmt;
 }
@@ -135,8 +153,7 @@ void SQLiteDB::Execute(const string &query) {
 	}
 	auto rc = sqlite3_exec(db, query.c_str(), nullptr, nullptr, nullptr);
 	if (rc != SQLITE_OK) {
-		string error = "Failed to execute query \"" + query + "\": " + string(sqlite3_errmsg(db));
-		throw std::runtime_error(error);
+		throw IOException("Failed to execute query \"%s\": %s", query, sqlite3_errmsg(db));
 	}
 }
 

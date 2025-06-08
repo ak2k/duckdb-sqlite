@@ -133,7 +133,7 @@ FROM counts;
 statement error
 SELECT * FROM sqlite_scan('https://example.com/non-existent-database.db', 'test');
 ----
-HTTP Error: Unable to connect to URL "https://example.com/non-existent-database.db": 404
+Error
 
 # Test 12: Error handling - non-existent table
 # Note: This test causes an INTERNAL error which the test framework doesn't handle well

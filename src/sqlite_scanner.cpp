@@ -72,7 +72,7 @@ static unique_ptr<FunctionData> SqliteBind(ClientContext &context, TableFunction
 	}
 
 	if (names.empty()) {
-		throw std::runtime_error("no columns for table " + result->table_name);
+		throw BinderException("Table \"%s\" has no columns", result->table_name);
 	}
 
 	if (!db.GetRowIdInfo(result->table_name, result->row_id_info)) {
@@ -313,7 +313,7 @@ static void SqliteScan(ClientContext &context, TableFunctionInput &data, DataChu
 					    out_vec, (const char *)sqlite3_value_blob(val), sqlite3_value_bytes(val));
 					break;
 				default:
-					throw std::runtime_error(out_vec.GetType().ToString());
+					throw InternalException("Unsupported type \"%s\" for SQLite value conversion", out_vec.GetType().ToString());
 				}
 			}
 			out_idx++;

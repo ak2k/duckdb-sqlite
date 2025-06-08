@@ -4,8 +4,6 @@
 #include "duckdb/common/exception.hpp"
 #include "duckdb/common/exception/http_exception.hpp"
 #include "duckdb/storage/buffer_manager.hpp"
-#include "duckdb/storage/buffer/block_handle.hpp"
-#include "duckdb/common/enums/memory_tag.hpp"
 #include <cstring>
 
 namespace duckdb {
@@ -20,18 +18,18 @@ static constexpr int DEFAULT_SQLITE_SECTOR_SIZE = 4096;
 
 static const sqlite3_io_methods duckdb_cache_io_methods = {
     1,                                         // iVersion
-    SqliteDuckDBCacheVFS::Close,               // xClose
-    SqliteDuckDBCacheVFS::Read,                // xRead
-    SqliteDuckDBCacheVFS::Write,               // xWrite
-    SqliteDuckDBCacheVFS::Truncate,            // xTruncate
-    SqliteDuckDBCacheVFS::Sync,                // xSync
-    SqliteDuckDBCacheVFS::FileSize,            // xFileSize
-    SqliteDuckDBCacheVFS::Lock,                // xLock
-    SqliteDuckDBCacheVFS::Unlock,              // xUnlock
-    SqliteDuckDBCacheVFS::CheckReservedLock,   // xCheckReservedLock
-    SqliteDuckDBCacheVFS::FileControl,         // xFileControl
-    SqliteDuckDBCacheVFS::SectorSize,          // xSectorSize
-    SqliteDuckDBCacheVFS::DeviceCharacteristics, // xDeviceCharacteristics
+    SQLiteDuckDBCacheVFS::Close,               // xClose
+    SQLiteDuckDBCacheVFS::Read,                // xRead
+    SQLiteDuckDBCacheVFS::Write,               // xWrite
+    SQLiteDuckDBCacheVFS::Truncate,            // xTruncate
+    SQLiteDuckDBCacheVFS::Sync,                // xSync
+    SQLiteDuckDBCacheVFS::FileSize,            // xFileSize
+    SQLiteDuckDBCacheVFS::Lock,                // xLock
+    SQLiteDuckDBCacheVFS::Unlock,              // xUnlock
+    SQLiteDuckDBCacheVFS::CheckReservedLock,   // xCheckReservedLock
+    SQLiteDuckDBCacheVFS::FileControl,         // xFileControl
+    SQLiteDuckDBCacheVFS::SectorSize,          // xSectorSize
+    SQLiteDuckDBCacheVFS::DeviceCharacteristics, // xDeviceCharacteristics
     nullptr,                                   // xShmMap
     nullptr,                                   // xShmLock
     nullptr,                                   // xShmBarrier
@@ -108,14 +106,14 @@ static void ValidateSQLiteHeader(DuckDBCachedFile &file) {
 }
 
 //===--------------------------------------------------------------------===//
-// SqliteDuckDBCacheVFS Implementation
+// SQLiteDuckDBCacheVFS Implementation
 //===--------------------------------------------------------------------===//
 
-bool SqliteDuckDBCacheVFS::CanHandlePath(ClientContext &context, const string &path) {
+bool SQLiteDuckDBCacheVFS::CanHandlePath(ClientContext &context, const string &path) {
 	return FileSystem::IsRemoteFile(path);
 }
 
-void SqliteDuckDBCacheVFS::Register(ClientContext &context) {
+void SQLiteDuckDBCacheVFS::Register(ClientContext &context) {
 	// Check if VFS is already registered
 	sqlite3_vfs *existing_vfs = sqlite3_vfs_find(GetVFSName());
 	if (existing_vfs) {
@@ -134,7 +132,7 @@ void SqliteDuckDBCacheVFS::Register(ClientContext &context) {
 	static sqlite3_vfs duckdb_vfs = {};
 	
 	duckdb_vfs.iVersion = 1;
-	duckdb_vfs.szOsFile = sizeof(SqliteDuckDBCachedFile);
+	duckdb_vfs.szOsFile = sizeof(SQLiteDuckDBCachedFile);
 	duckdb_vfs.mxPathname = default_vfs->mxPathname;
 	duckdb_vfs.zName = GetVFSName();
 	duckdb_vfs.pAppData = nullptr; // Don't store context pointer to avoid use-after-free
@@ -175,13 +173,13 @@ void SqliteDuckDBCacheVFS::Register(ClientContext &context) {
 	} \
 	return SQLITE_OK;
 
-int SqliteDuckDBCacheVFS::Open(sqlite3_vfs *vfs, const char *filename, sqlite3_file *file, int flags, int *out_flags) {
+int SQLiteDuckDBCacheVFS::Open(sqlite3_vfs *vfs, const char *filename, sqlite3_file *file, int flags, int *out_flags) {
 	if (!filename || (flags & SQLITE_OPEN_READONLY) == 0) {
 		return SQLITE_CANTOPEN;
 	}
 
 	try {
-		auto *duckdb_file = reinterpret_cast<SqliteDuckDBCachedFile*>(file);
+		auto *duckdb_file = reinterpret_cast<SQLiteDuckDBCachedFile*>(file);
 		
 		// Get ClientContext from thread-local storage
 		ClientContext *context = current_vfs_context;
@@ -190,7 +188,7 @@ int SqliteDuckDBCacheVFS::Open(sqlite3_vfs *vfs, const char *filename, sqlite3_f
 		}
 
 		// Initialize the file structure
-		memset(duckdb_file, 0, sizeof(SqliteDuckDBCachedFile));
+		memset(duckdb_file, 0, sizeof(SQLiteDuckDBCachedFile));
 		duckdb_file->base.pMethods = &duckdb_cache_io_methods;
 		duckdb_file->context = context; // Store context for file operations
 		
@@ -230,11 +228,11 @@ int SqliteDuckDBCacheVFS::Open(sqlite3_vfs *vfs, const char *filename, sqlite3_f
 	}
 }
 
-int SqliteDuckDBCacheVFS::Delete(sqlite3_vfs *vfs, const char *filename, int sync_dir) {
+int SQLiteDuckDBCacheVFS::Delete(sqlite3_vfs *vfs, const char *filename, int sync_dir) {
 	return SQLITE_IOERR_DELETE; // Cannot delete remote files
 }
 
-int SqliteDuckDBCacheVFS::Access(sqlite3_vfs *vfs, const char *filename, int flags, int *result) {
+int SQLiteDuckDBCacheVFS::Access(sqlite3_vfs *vfs, const char *filename, int flags, int *result) {
 	if (!filename || !result) {
 		return SQLITE_IOERR;
 	}
@@ -260,7 +258,7 @@ int SqliteDuckDBCacheVFS::Access(sqlite3_vfs *vfs, const char *filename, int fla
 	return SQLITE_OK;
 }
 
-int SqliteDuckDBCacheVFS::FullPathname(sqlite3_vfs *vfs, const char *filename, int out_size, char *out_buf) {
+int SQLiteDuckDBCacheVFS::FullPathname(sqlite3_vfs *vfs, const char *filename, int out_size, char *out_buf) {
 	if (!filename || !out_buf || out_size <= 0) {
 		return SQLITE_IOERR;
 	}
@@ -272,38 +270,38 @@ int SqliteDuckDBCacheVFS::FullPathname(sqlite3_vfs *vfs, const char *filename, i
 }
 
 // Delegate simple methods to default VFS
-int SqliteDuckDBCacheVFS::Randomness(sqlite3_vfs *vfs, int bytes, char *out) {
+int SQLiteDuckDBCacheVFS::Randomness(sqlite3_vfs *vfs, int bytes, char *out) {
 	DELEGATE_TO_DEFAULT_VFS(xRandomness, bytes, out);
 }
 
-int SqliteDuckDBCacheVFS::Sleep(sqlite3_vfs *vfs, int microseconds) {
+int SQLiteDuckDBCacheVFS::Sleep(sqlite3_vfs *vfs, int microseconds) {
 	DELEGATE_TO_DEFAULT_VFS(xSleep, microseconds);
 }
 
-int SqliteDuckDBCacheVFS::CurrentTime(sqlite3_vfs *vfs, double *time) {
+int SQLiteDuckDBCacheVFS::CurrentTime(sqlite3_vfs *vfs, double *time) {
 	DELEGATE_TO_DEFAULT_VFS(xCurrentTime, time);
 }
 
 // Unsupported operations for remote files
-void *SqliteDuckDBCacheVFS::DlOpen(sqlite3_vfs *vfs, const char *filename) {
+void *SQLiteDuckDBCacheVFS::DlOpen(sqlite3_vfs *vfs, const char *filename) {
 	return nullptr;
 }
 
-void SqliteDuckDBCacheVFS::DlError(sqlite3_vfs *vfs, int bytes, char *err_msg) {
+void SQLiteDuckDBCacheVFS::DlError(sqlite3_vfs *vfs, int bytes, char *err_msg) {
 	if (err_msg && bytes > 0) {
 		strncpy(err_msg, "Dynamic loading not supported for remote files", bytes - 1);
 		err_msg[bytes - 1] = '\0';
 	}
 }
 
-void (*SqliteDuckDBCacheVFS::DlSym(sqlite3_vfs *vfs, void *handle, const char *symbol))(void) {
+void (*SQLiteDuckDBCacheVFS::DlSym(sqlite3_vfs *vfs, void *handle, const char *symbol))(void) {
 	return nullptr;
 }
 
-void SqliteDuckDBCacheVFS::DlClose(sqlite3_vfs *vfs, void *handle) {
+void SQLiteDuckDBCacheVFS::DlClose(sqlite3_vfs *vfs, void *handle) {
 }
 
-int SqliteDuckDBCacheVFS::GetLastError(sqlite3_vfs *vfs, int bytes, char *err_msg) {
+int SQLiteDuckDBCacheVFS::GetLastError(sqlite3_vfs *vfs, int bytes, char *err_msg) {
 	if (err_msg && bytes > 0) {
 		err_msg[0] = '\0';
 	}
@@ -314,20 +312,20 @@ int SqliteDuckDBCacheVFS::GetLastError(sqlite3_vfs *vfs, int bytes, char *err_ms
 // File Methods
 //===--------------------------------------------------------------------===//
 
-int SqliteDuckDBCacheVFS::Close(sqlite3_file *file) {
+int SQLiteDuckDBCacheVFS::Close(sqlite3_file *file) {
 	if (file) {
-		auto *duckdb_file = reinterpret_cast<SqliteDuckDBCachedFile*>(file);
+		auto *duckdb_file = reinterpret_cast<SQLiteDuckDBCachedFile*>(file);
 		duckdb_file->duckdb_file.reset();
 	}
 	return SQLITE_OK;
 }
 
-int SqliteDuckDBCacheVFS::Read(sqlite3_file *file, void *buffer, int amount, sqlite3_int64 offset) {
+int SQLiteDuckDBCacheVFS::Read(sqlite3_file *file, void *buffer, int amount, sqlite3_int64 offset) {
 	if (!file || !buffer) {
 		return SQLITE_IOERR_READ;
 	}
 
-	auto *duckdb_file = reinterpret_cast<SqliteDuckDBCachedFile*>(file);
+	auto *duckdb_file = reinterpret_cast<SQLiteDuckDBCachedFile*>(file);
 	if (!duckdb_file->duckdb_file) {
 		return SQLITE_IOERR_READ;
 	}
@@ -335,12 +333,12 @@ int SqliteDuckDBCacheVFS::Read(sqlite3_file *file, void *buffer, int amount, sql
 	return duckdb_file->duckdb_file->Read(buffer, amount, offset);
 }
 
-int SqliteDuckDBCacheVFS::FileSize(sqlite3_file *file, sqlite3_int64 *size) {
+int SQLiteDuckDBCacheVFS::FileSize(sqlite3_file *file, sqlite3_int64 *size) {
 	if (!file || !size) {
 		return SQLITE_IOERR;
 	}
 
-	auto *duckdb_file = reinterpret_cast<SqliteDuckDBCachedFile*>(file);
+	auto *duckdb_file = reinterpret_cast<SQLiteDuckDBCachedFile*>(file);
 	if (!duckdb_file->duckdb_file) {
 		return SQLITE_IOERR;
 	}
@@ -358,42 +356,42 @@ int SqliteDuckDBCacheVFS::FileSize(sqlite3_file *file, sqlite3_int64 *size) {
 }
 
 // Read-only file operations
-int SqliteDuckDBCacheVFS::Write(sqlite3_file *file, const void *buffer, int amount, sqlite3_int64 offset) {
+int SQLiteDuckDBCacheVFS::Write(sqlite3_file *file, const void *buffer, int amount, sqlite3_int64 offset) {
 	return SQLITE_READONLY;
 }
 
-int SqliteDuckDBCacheVFS::Truncate(sqlite3_file *file, sqlite3_int64 size) {
+int SQLiteDuckDBCacheVFS::Truncate(sqlite3_file *file, sqlite3_int64 size) {
 	return SQLITE_READONLY;
 }
 
-int SqliteDuckDBCacheVFS::Sync(sqlite3_file *file, int flags) {
+int SQLiteDuckDBCacheVFS::Sync(sqlite3_file *file, int flags) {
 	return SQLITE_OK; // Nothing to sync for read-only files
 }
 
-int SqliteDuckDBCacheVFS::Lock(sqlite3_file *file, int level) {
+int SQLiteDuckDBCacheVFS::Lock(sqlite3_file *file, int level) {
 	return SQLITE_OK; // No locking needed for read-only remote files
 }
 
-int SqliteDuckDBCacheVFS::Unlock(sqlite3_file *file, int level) {
+int SQLiteDuckDBCacheVFS::Unlock(sqlite3_file *file, int level) {
 	return SQLITE_OK; // No locking needed for read-only remote files
 }
 
-int SqliteDuckDBCacheVFS::CheckReservedLock(sqlite3_file *file, int *result) {
+int SQLiteDuckDBCacheVFS::CheckReservedLock(sqlite3_file *file, int *result) {
 	if (result) {
 		*result = 0;
 	}
 	return SQLITE_OK;
 }
 
-int SqliteDuckDBCacheVFS::FileControl(sqlite3_file *file, int op, void *arg) {
+int SQLiteDuckDBCacheVFS::FileControl(sqlite3_file *file, int op, void *arg) {
 	return SQLITE_NOTFOUND; // No special file control operations
 }
 
-int SqliteDuckDBCacheVFS::SectorSize(sqlite3_file *file) {
+int SQLiteDuckDBCacheVFS::SectorSize(sqlite3_file *file) {
 	return DEFAULT_SQLITE_SECTOR_SIZE;
 }
 
-int SqliteDuckDBCacheVFS::DeviceCharacteristics(sqlite3_file *file) {
+int SQLiteDuckDBCacheVFS::DeviceCharacteristics(sqlite3_file *file) {
 	return SQLITE_IOCAP_IMMUTABLE; // Read-only device
 }
 

@@ -40,21 +40,27 @@ void SQLiteTransaction::Rollback() {
 }
 
 SQLiteDB &SQLiteTransaction::GetDB() {
-	if (!db) {
-		if (sqlite_catalog.InMemory()) {
-			// in-memory database - get a reference to the in-memory connection
-			db = sqlite_catalog.GetInMemoryDatabase(*context.lock());
-		} else {
-			// on-disk/remote database - open a new database connection
-			owned_db = SQLiteDB::Open(sqlite_catalog.path, sqlite_catalog.options, *context.lock(), true);
-			db = &owned_db;
+	// Use double-checked locking pattern for thread-safe lazy initialization
+	if (!db || !started) {
+		lock_guard<mutex> lock(initialization_mutex);
+		
+		// Check again after acquiring lock (double-checked locking)
+		if (!db) {
+			if (sqlite_catalog.InMemory()) {
+				// in-memory database - get a reference to the in-memory connection
+				db = sqlite_catalog.GetInMemoryDatabase(*context.lock());
+			} else {
+				// on-disk/remote database - open a new database connection
+				owned_db = SQLiteDB::Open(sqlite_catalog.path, sqlite_catalog.options, *context.lock(), true);
+				db = &owned_db;
+			}
 		}
-	}
-	
-	// Also handle deferred transaction start
-	if (!started) {
-		db->Execute("BEGIN TRANSACTION");
-		started = true;
+		
+		// Also handle deferred transaction start
+		if (!started) {
+			db->Execute("BEGIN TRANSACTION");
+			started = true;
+		}
 	}
 	
 	return *db;

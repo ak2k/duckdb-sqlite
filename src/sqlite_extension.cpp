@@ -39,8 +39,8 @@ static void LoadInternal(DatabaseInstance &db) {
 
 	config.storage_extensions["sqlite_scanner"] = make_uniq<SQLiteStorageExtension>();
 	
-	// Register HTTP SQLite FileSystem
-	HttpSqliteFileSystem::Register(db);
+	// HTTP SQLite support is handled entirely by VFS, no FileSystem needed
+	// HttpSqliteFileSystem::Register(db);  // Disabled - VFS is self-contained
 }
 
 void SqliteScannerExtension::Load(DuckDB &db) {
