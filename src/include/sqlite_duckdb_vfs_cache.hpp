@@ -21,7 +21,7 @@ namespace duckdb {
 
 class ClientContext;
 
-// DuckDB file that uses CachingFileSystem for proper cache management
+// Remote file access using DuckDB's CachingFileSystem
 class DuckDBCachedFile {
 public:
 	DuckDBCachedFile(ClientContext &context, const string &path);
@@ -39,7 +39,7 @@ private:
 	unique_ptr<CachingFileHandle> caching_handle;
 };
 
-// VFS that uses DuckDB's external file cache for proper sharing
+// SQLite VFS implementation for remote file access through DuckDB
 class SqliteDuckDBCacheVFS {
 public:
 	//! Register the cached DuckDB VFS with SQLite
@@ -78,7 +78,7 @@ public:
 	static int DeviceCharacteristics(sqlite3_file *file);
 
 private:
-	// No static VFS state needed - SQLite handles registration
+	// VFS registration is managed by SQLite internally
 };
 
 //! SQLite file structure for DuckDB cached files

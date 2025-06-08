@@ -28,8 +28,7 @@ bool HttpSqliteFileSystem::CanHandleFile(const string &path) {
 		return false;
 	}
 	
-	// For remote files, we'll validate SQLite format during file opening
-	// This avoids making extra HTTP requests in CanHandleFile
+	// SQLite format validation is deferred to file opening to avoid extra HTTP requests
 	return true;
 }
 
@@ -87,8 +86,7 @@ bool HttpSqliteFileSystem::FileExists(const string &filename, optional_ptr<FileO
 		return false;
 	}
 	
-	// For HTTP files, assume existence if URL is well-formed
-	// Actual validation occurs during file opening
+	// Remote file existence cannot be efficiently validated without opening
 	return FileSystem::IsRemoteFile(filename);
 }
 
@@ -109,23 +107,20 @@ HttpSqliteFileHandle::HttpSqliteFileHandle(FileSystem &fs, const string &path, C
 		throw InternalException("HttpSqliteFileHandle requires valid ClientContext");
 	}
 	
-	// Create cached file using DuckDB's caching system
+	// Initialize cached file with DuckDB's remote file caching
 	cached_file = make_uniq<DuckDBCachedFile>(*context, path);
 	
-	// Validate SQLite file format by checking header
+	// Verify file is a valid SQLite database
 	ValidateSQLiteHeader();
 }
 
 void HttpSqliteFileHandle::ValidateSQLiteHeader() {
-	// SQLite database file header is exactly 16 bytes: "SQLite format 3\000"
+	// SQLite format validation per https://www.sqlite.org/fileformat.html
 	constexpr char SQLITE_HEADER[] = "SQLite format 3\000";
 	constexpr size_t SQLITE_HEADER_SIZE = 16;
 	
-	// Read the first 16 bytes to check SQLite header
 	char header_buffer[SQLITE_HEADER_SIZE];
 	cached_file->Read(header_buffer, SQLITE_HEADER_SIZE, 0);
-	
-	// Compare with expected SQLite header
 	if (memcmp(header_buffer, SQLITE_HEADER, SQLITE_HEADER_SIZE) != 0) {
 		throw InvalidInputException("File is not a valid SQLite database: %s", path);
 	}

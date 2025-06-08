@@ -9,7 +9,7 @@
 
 namespace duckdb {
 
-// No global VFS tracking needed - SQLite handles registration internally
+// SQLite VFS registration is handled by sqlite3_vfs_register()
 
 static sqlite3_io_methods duckdb_cache_io_methods = {
     1,                                         // iVersion
@@ -40,14 +40,12 @@ static sqlite3_io_methods duckdb_cache_io_methods = {
 DuckDBCachedFile::DuckDBCachedFile(ClientContext &context, const string &path) 
     : path(path) {
 	
-	// Use DuckDB's CachingFileSystem for efficient remote file access
+	// Initialize DuckDB's CachingFileSystem for remote file access
 	auto caching_fs = CachingFileSystem::Get(context);
 	auto flags = FileFlags::FILE_FLAGS_READ;
 	if (FileSystem::IsRemoteFile(path)) {
-		flags |= FileFlags::FILE_FLAGS_DIRECT_IO;  // Enable direct I/O for remote files
+		flags |= FileFlags::FILE_FLAGS_DIRECT_IO;
 	}
-	
-	// Open file with caching enabled
 	OpenFileInfo file_info(path);
 	caching_handle = caching_fs.OpenFile(file_info, flags);
 }
@@ -62,15 +60,14 @@ int DuckDBCachedFile::Read(void *buffer, int amount, sqlite3_int64 offset) {
 	}
 
 	try {
-		// Use 1MB read-ahead blocks to reduce HTTP requests
-		// SQLite typically reads 4KB pages, but we read full 1MB blocks
-		// and let DuckDB's cache serve subsequent reads from the same block
-		constexpr idx_t READ_AHEAD_SIZE = 1024 * 1024; // 1MB blocks
+		// Read-ahead optimization: SQLite uses 4KB pages, but we read 1MB blocks
+		// to reduce HTTP requests and leverage DuckDB's caching
+		constexpr idx_t READ_AHEAD_SIZE = 1024 * 1024;
 		
 		idx_t requested_offset = static_cast<idx_t>(offset);
 		idx_t requested_amount = static_cast<idx_t>(amount);
 		
-		// Calculate 1MB-aligned block boundaries
+		// Align reads to 1MB block boundaries
 		idx_t block_start = (requested_offset / READ_AHEAD_SIZE) * READ_AHEAD_SIZE;
 		idx_t block_end = block_start + READ_AHEAD_SIZE;
 		
@@ -80,23 +77,22 @@ int DuckDBCachedFile::Read(void *buffer, int amount, sqlite3_int64 offset) {
 			block_end = file_size;
 		}
 		
-		// Read the full 1MB block (or to end of file)
+		// Read the aligned block (up to 1MB or end of file)
 		idx_t read_amount = block_end - block_start;
 		if (read_amount > 0) {
 			data_ptr_t read_ptr;
 			auto buffer_handle = caching_handle->Read(read_ptr, read_amount, block_start);
 			
-			// Calculate offset within the read block and copy requested data
+			// Extract requested data from the larger read block
 			idx_t offset_in_block = requested_offset - block_start;
 			if (offset_in_block + requested_amount <= read_amount) {
 				memcpy(buffer, read_ptr + offset_in_block, requested_amount);
 			} else {
-				// Request extends beyond block - this should not happen with 1MB blocks
-				// and typical SQLite 4KB reads, but handle gracefully
+				// Handle edge case where request spans beyond block boundary
 				idx_t available = read_amount - offset_in_block;
 				if (available > 0) {
 					memcpy(buffer, read_ptr + offset_in_block, available);
-					// Zero remaining buffer to indicate short read
+					// Zero remaining buffer for short read
 					memset(static_cast<char*>(buffer) + available, 0, requested_amount - available);
 				}
 				return SQLITE_IOERR_SHORT_READ;
@@ -104,18 +100,14 @@ int DuckDBCachedFile::Read(void *buffer, int amount, sqlite3_int64 offset) {
 		}
 		
 		return SQLITE_OK;
-	} catch (const Exception &e) {
-		// Convert DuckDB exceptions to SQLite errors
-		return SQLITE_IOERR_READ;
-	} catch (const std::exception &e) {
-		return SQLITE_IOERR_READ;
 	} catch (...) {
+		// Convert any exception to SQLite I/O error
 		return SQLITE_IOERR_READ;
 	}
 }
 
 sqlite3_int64 DuckDBCachedFile::GetFileSize() {
-	// Let DuckDB handle ALL cache management automatically
+	// File size is managed by DuckDB's caching layer
 	return caching_handle->GetFileSize();
 }
 

@@ -68,16 +68,10 @@ SQLiteDB SQLiteDB::Open(const string &path, const SQLiteOpenOptions &options, bo
 }
 
 SQLiteDB SQLiteDB::Open(const string &path, const SQLiteOpenOptions &options, ClientContext &context, bool is_shared) {
-	// Check for remote files that might be SQLite databases
+	// Handle remote SQLite databases via VFS for efficient block-level access
 	if (FileSystem::IsRemoteFile(path)) {
-		
-		// Use VFS for remote SQLite files to enable block-by-block access
-		// The VFS will validate SQLite format during opening
 		if (SqliteDuckDBCacheVFS::CanHandlePath(context, path)) {
-			// Register VFS for remote file access
 			SqliteDuckDBCacheVFS::Register(context);
-			
-			// Open database using cached VFS
 			SQLiteDB result;
 			int flags = SQLITE_OPEN_PRIVATECACHE | SQLITE_OPEN_READONLY;
 			if (!is_shared) {
