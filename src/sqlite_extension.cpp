@@ -7,7 +7,6 @@
 #include "sqlite_scanner.hpp"
 #include "sqlite_storage.hpp"
 #include "sqlite_scanner_extension.hpp"
-#include "http_sqlite_filesystem.hpp"
 
 #include "duckdb/catalog/catalog.hpp"
 #include "duckdb/main/extension_util.hpp"
@@ -39,8 +38,7 @@ static void LoadInternal(DatabaseInstance &db) {
 
 	config.storage_extensions["sqlite_scanner"] = make_uniq<SQLiteStorageExtension>();
 	
-	// HTTP SQLite support is handled entirely by VFS, no FileSystem needed
-	// HttpSqliteFileSystem::Register(db);  // Disabled - VFS is self-contained
+	// HTTP SQLite support is handled entirely by VFS through DuckDB's CachingFileSystem
 }
 
 void SqliteScannerExtension::Load(DuckDB &db) {
