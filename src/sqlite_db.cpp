@@ -68,40 +68,48 @@ SQLiteDB SQLiteDB::Open(const string &path, const SQLiteOpenOptions &options, bo
 }
 
 SQLiteDB SQLiteDB::Open(const string &path, const SQLiteOpenOptions &options, ClientContext &context, bool is_shared) {
-	// Check if DuckDB can handle this path (remote files, etc.)
-	if (SqliteDuckDBCacheVFS::CanHandlePath(context, path)) {
-		// Register the cached DuckDB VFS if needed
-		SqliteDuckDBCacheVFS::Register(context);
+	// Check for remote files that might be SQLite databases
+	if (FileSystem::IsRemoteFile(path)) {
 		
-		// Open with cached DuckDB VFS (full external cache integration)
-		SQLiteDB result;
-		int flags = SQLITE_OPEN_PRIVATECACHE | SQLITE_OPEN_READONLY;
-		if (!is_shared) {
-			flags |= SQLITE_OPEN_NOMUTEX;
-		}
-		flags |= SQLITE_OPEN_EXRESCODE;
-		
-		auto rc = sqlite3_open_v2(path.c_str(), &result.db, flags, SqliteDuckDBCacheVFS::GetVFSName());
-		if (rc != SQLITE_OK) {
-			throw std::runtime_error("Unable to open database \"" + path + "\": " + string(sqlite3_errstr(rc)));
-		}
-		
-		// Apply busy timeout if specified
-		if (options.busy_timeout > 0) {
-			if (options.busy_timeout > NumericLimits<int>::Maximum()) {
-				throw std::runtime_error("busy_timeout out of range - must be within "
-				                         "valid range for type int");
+		// Use VFS for remote SQLite files to enable block-by-block access
+		// The VFS will validate SQLite format during opening
+		if (SqliteDuckDBCacheVFS::CanHandlePath(context, path)) {
+			// Register VFS for remote file access
+			SqliteDuckDBCacheVFS::Register(context);
+			
+			// Open database using cached VFS
+			SQLiteDB result;
+			int flags = SQLITE_OPEN_PRIVATECACHE | SQLITE_OPEN_READONLY;
+			if (!is_shared) {
+				flags |= SQLITE_OPEN_NOMUTEX;
 			}
-			rc = sqlite3_busy_timeout(result.db, int(options.busy_timeout));
+			flags |= SQLITE_OPEN_EXRESCODE;
+			
+			auto rc = sqlite3_open_v2(path.c_str(), &result.db, flags, SqliteDuckDBCacheVFS::GetVFSName());
 			if (rc != SQLITE_OK) {
-				throw std::runtime_error("Failed to set busy timeout");
+				throw std::runtime_error("Unable to open database \"" + path + "\": " + string(sqlite3_errstr(rc)));
 			}
+			
+			// Apply busy timeout if specified
+			if (options.busy_timeout > 0) {
+				if (options.busy_timeout > NumericLimits<int>::Maximum()) {
+					throw std::runtime_error("busy_timeout out of range - must be within "
+					                         "valid range for type int");
+				}
+				rc = sqlite3_busy_timeout(result.db, int(options.busy_timeout));
+				if (rc != SQLITE_OK) {
+					throw std::runtime_error("Failed to set busy timeout");
+				}
+			}
+			
+			// HTTP databases are read-only
+			return result;
+		} else {
+			// Fallback to regular file opening
+			return Open(path, options, is_shared);
 		}
-		
-		// HTTP databases are always read-only, so we can skip journal mode
-		return result;
 	} else {
-		// Regular file path - use normal open
+		// Use standard file opening for local files
 		return Open(path, options, is_shared);
 	}
 }

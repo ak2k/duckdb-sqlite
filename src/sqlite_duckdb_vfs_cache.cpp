@@ -9,10 +9,7 @@
 
 namespace duckdb {
 
-ClientContext *SqliteDuckDBCacheVFS::current_context = nullptr;
-std::mutex SqliteDuckDBCacheVFS::context_mutex;
-bool SqliteDuckDBCacheVFS::vfs_registered = false;
-sqlite3_vfs *SqliteDuckDBCacheVFS::registered_vfs = nullptr;
+// No global VFS tracking needed - SQLite handles registration internally
 
 static sqlite3_io_methods duckdb_cache_io_methods = {
     1,                                         // iVersion
@@ -43,14 +40,14 @@ static sqlite3_io_methods duckdb_cache_io_methods = {
 DuckDBCachedFile::DuckDBCachedFile(ClientContext &context, const string &path) 
     : path(path) {
 	
-	// Use DuckDB's intended high-level CachingFileSystem interface
+	// Use DuckDB's CachingFileSystem for efficient remote file access
 	auto caching_fs = CachingFileSystem::Get(context);
 	auto flags = FileFlags::FILE_FLAGS_READ;
 	if (FileSystem::IsRemoteFile(path)) {
-		flags |= FileFlags::FILE_FLAGS_DIRECT_IO;  // Proper remote file handling
+		flags |= FileFlags::FILE_FLAGS_DIRECT_IO;  // Enable direct I/O for remote files
 	}
 	
-	// Open the file through CachingFileSystem - this handles all cache management automatically
+	// Open file with caching enabled
 	OpenFileInfo file_info(path);
 	caching_handle = caching_fs.OpenFile(file_info, flags);
 }
@@ -65,12 +62,46 @@ int DuckDBCachedFile::Read(void *buffer, int amount, sqlite3_int64 offset) {
 	}
 
 	try {
-		// Use DuckDB's optimized cached read implementation
-		data_ptr_t read_ptr;
-		auto buffer_handle = caching_handle->Read(read_ptr, static_cast<idx_t>(amount), static_cast<idx_t>(offset));
+		// Use 1MB read-ahead blocks to reduce HTTP requests
+		// SQLite typically reads 4KB pages, but we read full 1MB blocks
+		// and let DuckDB's cache serve subsequent reads from the same block
+		constexpr idx_t READ_AHEAD_SIZE = 1024 * 1024; // 1MB blocks
 		
-		// Copy from DuckDB's cached buffer to SQLite's buffer
-		memcpy(buffer, read_ptr, amount);
+		idx_t requested_offset = static_cast<idx_t>(offset);
+		idx_t requested_amount = static_cast<idx_t>(amount);
+		
+		// Calculate 1MB-aligned block boundaries
+		idx_t block_start = (requested_offset / READ_AHEAD_SIZE) * READ_AHEAD_SIZE;
+		idx_t block_end = block_start + READ_AHEAD_SIZE;
+		
+		// Get file size to avoid reading past end of file
+		idx_t file_size = static_cast<idx_t>(GetFileSize());
+		if (block_end > file_size) {
+			block_end = file_size;
+		}
+		
+		// Read the full 1MB block (or to end of file)
+		idx_t read_amount = block_end - block_start;
+		if (read_amount > 0) {
+			data_ptr_t read_ptr;
+			auto buffer_handle = caching_handle->Read(read_ptr, read_amount, block_start);
+			
+			// Calculate offset within the read block and copy requested data
+			idx_t offset_in_block = requested_offset - block_start;
+			if (offset_in_block + requested_amount <= read_amount) {
+				memcpy(buffer, read_ptr + offset_in_block, requested_amount);
+			} else {
+				// Request extends beyond block - this should not happen with 1MB blocks
+				// and typical SQLite 4KB reads, but handle gracefully
+				idx_t available = read_amount - offset_in_block;
+				if (available > 0) {
+					memcpy(buffer, read_ptr + offset_in_block, available);
+					// Zero remaining buffer to indicate short read
+					memset(static_cast<char*>(buffer) + available, 0, requested_amount - available);
+				}
+				return SQLITE_IOERR_SHORT_READ;
+			}
+		}
 		
 		return SQLITE_OK;
 	} catch (const Exception &e) {
@@ -88,6 +119,25 @@ sqlite3_int64 DuckDBCachedFile::GetFileSize() {
 	return caching_handle->GetFileSize();
 }
 
+static void ValidateSQLiteHeader(DuckDBCachedFile &file) {
+	// SQLite database file header is exactly 16 bytes: "SQLite format 3\000"
+	constexpr char SQLITE_HEADER[] = "SQLite format 3\000";
+	constexpr size_t SQLITE_HEADER_SIZE = 16;
+	
+	// Read the first 16 bytes to check SQLite header
+	char header_buffer[SQLITE_HEADER_SIZE];
+	int result = file.Read(header_buffer, SQLITE_HEADER_SIZE, 0);
+	
+	if (result != SQLITE_OK) {
+		throw InvalidInputException("Failed to read file header");
+	}
+	
+	// Compare with expected SQLite header
+	if (memcmp(header_buffer, SQLITE_HEADER, SQLITE_HEADER_SIZE) != 0) {
+		throw InvalidInputException("File is not a valid SQLite database");
+	}
+}
+
 //===--------------------------------------------------------------------===//
 // SqliteDuckDBCacheVFS Implementation
 //===--------------------------------------------------------------------===//
@@ -97,13 +147,6 @@ bool SqliteDuckDBCacheVFS::CanHandlePath(ClientContext &context, const string &p
 }
 
 void SqliteDuckDBCacheVFS::Register(ClientContext &context) {
-	
-	// Store the context for use in VFS callbacks
-	{
-		std::lock_guard<std::mutex> lock(context_mutex);
-		current_context = &context;
-	}
-
 	// Check if VFS is already registered
 	sqlite3_vfs *existing_vfs = sqlite3_vfs_find(GetVFSName());
 	if (existing_vfs) {
@@ -124,7 +167,7 @@ void SqliteDuckDBCacheVFS::Register(ClientContext &context) {
 	duckdb_vfs->szOsFile = sizeof(SqliteDuckDBCachedFile);
 	duckdb_vfs->mxPathname = default_vfs->mxPathname;
 	duckdb_vfs->zName = GetVFSName();
-	duckdb_vfs->pAppData = nullptr;
+	duckdb_vfs->pAppData = &context; // Store context in VFS for file operations
 
 	// Set up methods
 	duckdb_vfs->xOpen = Open;
@@ -168,13 +211,8 @@ int SqliteDuckDBCacheVFS::Open(sqlite3_vfs *vfs, const char *filename, sqlite3_f
 	try {
 		auto *duckdb_file = reinterpret_cast<SqliteDuckDBCachedFile*>(file);
 		
-		// Get the current context
-		ClientContext *context = nullptr;
-		{
-			std::lock_guard<std::mutex> lock(context_mutex);
-			context = current_context;
-		}
-		
+		// Get ClientContext from VFS
+		ClientContext *context = static_cast<ClientContext*>(vfs->pAppData);
 		if (!context) {
 			return SQLITE_CANTOPEN;
 		}
@@ -182,10 +220,17 @@ int SqliteDuckDBCacheVFS::Open(sqlite3_vfs *vfs, const char *filename, sqlite3_f
 		// Initialize the file structure
 		memset(duckdb_file, 0, sizeof(SqliteDuckDBCachedFile));
 		duckdb_file->base.pMethods = &duckdb_cache_io_methods;
-		duckdb_file->context = context; // Store context per-file instead of globally
+		duckdb_file->context = context; // Store context for file operations
 		
-		// Create the DuckDB cached file
+		// Initialize cached file for remote access
 		duckdb_file->duckdb_file = make_uniq<DuckDBCachedFile>(*context, filename);
+		
+		// Validate SQLite file format by checking header
+		try {
+			ValidateSQLiteHeader(*duckdb_file->duckdb_file);
+		} catch (const Exception &e) {
+			return SQLITE_CANTOPEN;
+		}
 
 		if (out_flags) {
 			*out_flags = flags;
@@ -212,11 +257,8 @@ int SqliteDuckDBCacheVFS::Access(sqlite3_vfs *vfs, const char *filename, int fla
 
 	if (flags == SQLITE_ACCESS_EXISTS) {
 		try {
-			ClientContext *context = nullptr;
-			{
-				std::lock_guard<std::mutex> lock(context_mutex);
-				context = current_context;
-			}
+			// Get ClientContext from VFS
+			ClientContext *context = static_cast<ClientContext*>(vfs->pAppData);
 			
 			if (context) {
 				auto &fs = context->db->GetFileSystem();
@@ -239,7 +281,7 @@ int SqliteDuckDBCacheVFS::FullPathname(sqlite3_vfs *vfs, const char *filename, i
 		return SQLITE_IOERR;
 	}
 
-	// For remote filesystems, just return the path as-is
+	// Return path unchanged for remote files
 	strncpy(out_buf, filename, out_size - 1);
 	out_buf[out_size - 1] = '\0';
 	return SQLITE_OK;

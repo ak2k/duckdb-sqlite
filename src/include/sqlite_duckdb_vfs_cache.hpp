@@ -78,17 +78,14 @@ public:
 	static int DeviceCharacteristics(sqlite3_file *file);
 
 private:
-	static ClientContext *current_context;
-	static std::mutex context_mutex;
-	static bool vfs_registered;
-	static sqlite3_vfs *registered_vfs;
+	// No static VFS state needed - SQLite handles registration
 };
 
 //! SQLite file structure for DuckDB cached files
 struct SqliteDuckDBCachedFile {
 	sqlite3_file base;  // Must be first
 	unique_ptr<DuckDBCachedFile> duckdb_file;
-	ClientContext *context; // Store context per-file instead of globally
+	ClientContext *context; // Context for this file handle
 };
 
 } // namespace duckdb

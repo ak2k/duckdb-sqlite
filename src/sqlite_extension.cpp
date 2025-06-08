@@ -7,6 +7,7 @@
 #include "sqlite_scanner.hpp"
 #include "sqlite_storage.hpp"
 #include "sqlite_scanner_extension.hpp"
+#include "http_sqlite_filesystem.hpp"
 
 #include "duckdb/catalog/catalog.hpp"
 #include "duckdb/main/extension_util.hpp"
@@ -37,6 +38,9 @@ static void LoadInternal(DatabaseInstance &db) {
 	                          LogicalType::BOOLEAN, Value::BOOLEAN(false), SetSqliteDebugQueryPrint);
 
 	config.storage_extensions["sqlite_scanner"] = make_uniq<SQLiteStorageExtension>();
+	
+	// Register HTTP SQLite FileSystem
+	HttpSqliteFileSystem::Register(db);
 }
 
 void SqliteScannerExtension::Load(DuckDB &db) {
