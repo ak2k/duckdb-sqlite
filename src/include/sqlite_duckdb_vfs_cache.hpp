@@ -84,10 +84,19 @@ private:
 };
 
 //! SQLite file structure for DuckDB cached files
+//! Ensure proper alignment for cross-platform compatibility
+#ifdef _WIN32
+#pragma pack(push, 8)
+#endif
 struct SQLiteDuckDBCachedFile {
 	sqlite3_file base;  // Must be first
 	unique_ptr<DuckDBCachedFile> duckdb_file;
 	ClientContext *context; // Context for this file handle
+#ifdef _WIN32
+} __declspec(align(8));
+#pragma pack(pop)
+#else
 };
+#endif
 
 } // namespace duckdb

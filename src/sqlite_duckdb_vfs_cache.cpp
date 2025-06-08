@@ -65,18 +65,33 @@ DuckDBCachedFile::~DuckDBCachedFile() {
 
 
 int DuckDBCachedFile::Read(void *buffer, int amount, sqlite3_int64 offset) {
-	if (amount <= 0) {
+	// Validate input parameters
+	if (!buffer || amount <= 0) {
 		return SQLITE_OK;
+	}
+	
+	// Validate caching handle
+	if (!caching_handle) {
+		return SQLITE_IOERR_READ;
 	}
 
 	try {
 		// Use DuckDB's CachingFileSystem for 1MB read-ahead
-		data_ptr_t read_buffer;
+		data_ptr_t read_buffer = nullptr;
 		auto buffer_handle = caching_handle->Read(read_buffer, amount, offset);
+		
+		// Validate read buffer before copying
+		if (!read_buffer) {
+			return SQLITE_IOERR_READ;
+		}
+		
 		memcpy(buffer, read_buffer, amount);
 		return SQLITE_OK;
-	} catch (...) {
+	} catch (const std::exception &e) {
 		// Convert any exception to SQLite I/O error
+		return SQLITE_IOERR_READ;
+	} catch (...) {
+		// Convert any unknown exception to SQLite I/O error
 		return SQLITE_IOERR_READ;
 	}
 }
@@ -174,11 +189,21 @@ void SQLiteDuckDBCacheVFS::Register(ClientContext &context) {
 	return SQLITE_OK;
 
 int SQLiteDuckDBCacheVFS::Open(sqlite3_vfs *vfs, const char *filename, sqlite3_file *file, int flags, int *out_flags) {
-	if (!filename || (flags & SQLITE_OPEN_READONLY) == 0) {
+	// Validate input parameters
+	if (!vfs || !filename || !file) {
+		return SQLITE_CANTOPEN;
+	}
+	
+	if ((flags & SQLITE_OPEN_READONLY) == 0) {
 		return SQLITE_CANTOPEN;
 	}
 
 	try {
+		// Validate file structure size and alignment
+		if (vfs->szOsFile < sizeof(SQLiteDuckDBCachedFile)) {
+			return SQLITE_CANTOPEN;
+		}
+		
 		auto *duckdb_file = reinterpret_cast<SQLiteDuckDBCachedFile*>(file);
 		
 		// Get ClientContext from thread-local storage
@@ -187,13 +212,23 @@ int SQLiteDuckDBCacheVFS::Open(sqlite3_vfs *vfs, const char *filename, sqlite3_f
 			return SQLITE_CANTOPEN;
 		}
 
-		// Initialize the file structure
+		// Initialize the file structure (zero-initialize first for safety)
 		memset(duckdb_file, 0, sizeof(SQLiteDuckDBCachedFile));
 		duckdb_file->base.pMethods = &duckdb_cache_io_methods;
 		duckdb_file->context = context; // Store context for file operations
 		
-		// Initialize cached file for remote access
-		duckdb_file->duckdb_file = make_uniq<DuckDBCachedFile>(*context, filename);
+		// Initialize cached file for remote access with additional error handling
+		try {
+			duckdb_file->duckdb_file = make_uniq<DuckDBCachedFile>(*context, filename);
+		} catch (const std::exception &e) {
+			// Clean up on failure
+			memset(duckdb_file, 0, sizeof(SQLiteDuckDBCachedFile));
+			return SQLITE_CANTOPEN;
+		} catch (...) {
+			// Clean up on unknown failure
+			memset(duckdb_file, 0, sizeof(SQLiteDuckDBCachedFile));
+			return SQLITE_CANTOPEN;
+		}
 		
 		// Validate SQLite file format by checking header
 		try {
