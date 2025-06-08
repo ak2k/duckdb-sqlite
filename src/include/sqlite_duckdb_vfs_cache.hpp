@@ -12,7 +12,6 @@
 #include "duckdb/common/file_system.hpp"
 #include "duckdb/storage/buffer_manager.hpp"
 #include "duckdb/storage/buffer/buffer_handle.hpp"
-#include "duckdb/storage/external_file_cache.hpp"
 #include "duckdb/storage/caching_file_system.hpp"
 #include "sqlite3.h"
 #include <mutex>
@@ -22,13 +21,13 @@ namespace duckdb {
 
 class ClientContext;
 
-// DuckDB file that uses external file cache for proper cache sharing
+// DuckDB file that uses CachingFileSystem for proper cache management
 class DuckDBCachedFile {
 public:
 	DuckDBCachedFile(ClientContext &context, const string &path);
 	~DuckDBCachedFile();
 
-	//! Read data from the file using external file cache
+	//! Read data from the file using DuckDB's CachingFileSystem
 	int Read(void *buffer, int amount, sqlite3_int64 offset);
 	//! Get the file size
 	sqlite3_int64 GetFileSize();
@@ -36,28 +35,8 @@ public:
 	const string &GetPath() const { return path; }
 
 private:
-	//! Try to get cached range without fetching
-	BufferHandle TryGetCachedRange(idx_t offset, idx_t amount);
-	//! Ensure file is open and metadata is loaded
-	void EnsureFileOpen();
-	//! Try to read from cache or fetch if needed
-	BufferHandle ReadFromCache(idx_t offset, idx_t amount);
-	
-	//! Get the block size (1MB like original)
-	static constexpr idx_t BLOCK_SIZE = 1024 * 1024;
-
-private:
-	ClientContext &context;
 	string path;
-	ExternalFileCache &cache;
-	ExternalFileCache::CachedFile &cached_file;
-	unique_ptr<FileHandle> file_handle;
-	sqlite3_int64 file_size;
-	bool size_fetched;
-	
-	// Version tracking for cache validation
-	time_t last_modified;
-	string version_tag;
+	unique_ptr<CachingFileHandle> caching_handle;
 };
 
 // VFS that uses DuckDB's external file cache for proper sharing
@@ -67,8 +46,6 @@ public:
 	static void Register(ClientContext &context);
 	//! Check if DuckDB can handle this path
 	static bool CanHandlePath(ClientContext &context, const string &path);
-	//! Clean up VFS registration (for proper shutdown)
-	static void Cleanup();
 	//! Get the VFS name
 	static const char *GetVFSName() { return "duckdb_cache_fs"; }
 
