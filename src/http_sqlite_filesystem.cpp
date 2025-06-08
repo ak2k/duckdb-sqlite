@@ -16,6 +16,9 @@
 #include "duckdb/common/string_util.hpp"
 #include <cstring>
 
+// Thread-local flag to prevent infinite recursion
+thread_local bool http_sqlite_opening = false;
+
 namespace duckdb {
 
 //===--------------------------------------------------------------------===//
@@ -23,12 +26,18 @@ namespace duckdb {
 //===--------------------------------------------------------------------===//
 
 bool HttpSqliteFileSystem::CanHandleFile(const string &path) {
-	// Only handle remote files
+	// CRITICAL: Only handle files when explicitly called from our VFS
+	// This prevents infinite recursion and lets httpfs handle direct HTTP access
+	if (!http_sqlite_opening) {
+		return false;  // Not called from our VFS, let httpfs handle it
+	}
+	
+	// Only handle remote files when called from VFS
 	if (!FileSystem::IsRemoteFile(path)) {
 		return false;
 	}
 	
-	// SQLite format validation is deferred to file opening to avoid extra HTTP requests
+	// We can handle any remote file when called from VFS - SQLite validation happens during opening
 	return true;
 }
 
@@ -59,26 +68,38 @@ unique_ptr<FileHandle> HttpSqliteFileSystem::OpenFileExtended(const OpenFileInfo
 		throw InvalidInputException("HttpSqliteFileSystem requires ClientContext for file: %s", file.path);
 	}
 	
-	// Create file handle with context
+	// RAII guard to automatically manage flag state
+	struct FlagGuard {
+		bool &flag;
+		explicit FlagGuard(bool &f) : flag(f) { flag = true; }
+		~FlagGuard() { flag = false; }
+	};
+	
+	// Set flag to prevent recursion when creating cached file
+	FlagGuard guard(http_sqlite_opening);
 	return make_uniq<HttpSqliteFileHandle>(*this, file.path, context);
 }
 
 int64_t HttpSqliteFileSystem::GetFileSize(FileHandle &handle) {
 	auto &sqlite_handle = handle.Cast<HttpSqliteFileHandle>();
-	auto cached_file = sqlite_handle.GetCachedFile();
-	if (!cached_file) {
-		throw InternalException("HttpSqliteFileHandle has no cached file");
+	auto caching_handle = sqlite_handle.GetCachingHandle();
+	if (!caching_handle) {
+		throw InternalException("HttpSqliteFileHandle has no caching handle");
 	}
-	return cached_file->GetFileSize();
+	return caching_handle->GetFileSize();
 }
 
 void HttpSqliteFileSystem::Read(FileHandle &handle, void *buffer, int64_t nr_bytes, idx_t location) {
 	auto &sqlite_handle = handle.Cast<HttpSqliteFileHandle>();
-	auto cached_file = sqlite_handle.GetCachedFile();
-	if (!cached_file) {
-		throw InternalException("HttpSqliteFileHandle has no cached file");
+	auto caching_handle = sqlite_handle.GetCachingHandle();
+	if (!caching_handle) {
+		throw InternalException("HttpSqliteFileHandle has no caching handle");
 	}
-	cached_file->Read(buffer, nr_bytes, location);
+	
+	// Use DuckDB's caching read API
+	data_ptr_t read_buffer;
+	auto buffer_handle = caching_handle->Read(read_buffer, nr_bytes, location);
+	memcpy(buffer, read_buffer, nr_bytes);
 }
 
 bool HttpSqliteFileSystem::FileExists(const string &filename, optional_ptr<FileOpener> opener) {
@@ -107,8 +128,21 @@ HttpSqliteFileHandle::HttpSqliteFileHandle(FileSystem &fs, const string &path, C
 		throw InternalException("HttpSqliteFileHandle requires valid ClientContext");
 	}
 	
-	// Initialize cached file with DuckDB's remote file caching
-	cached_file = make_uniq<DuckDBCachedFile>(*context, path);
+	// Use CachingFileSystem directly with httpfs (no DuckDBCachedFile wrapper)
+	// This avoids recursion since we're the bridge between VFS and DuckDB
+	auto caching_fs = CachingFileSystem::Get(*context);
+	auto flags = FileOpenFlags::FILE_FLAGS_READ | FileOpenFlags::FILE_FLAGS_DIRECT_IO;
+	OpenFileInfo file_info(path);
+	
+	// Reset the flag so httpfs can handle this
+	http_sqlite_opening = false;
+	try {
+		caching_handle = caching_fs.OpenFile(file_info, flags);
+		http_sqlite_opening = true;  // Restore for cleanup
+	} catch (...) {
+		http_sqlite_opening = true;  // Restore for cleanup
+		throw;
+	}
 	
 	// Verify file is a valid SQLite database
 	ValidateSQLiteHeader();
@@ -119,16 +153,17 @@ void HttpSqliteFileHandle::ValidateSQLiteHeader() {
 	constexpr char SQLITE_HEADER[] = "SQLite format 3\000";
 	constexpr size_t SQLITE_HEADER_SIZE = 16;
 	
-	char header_buffer[SQLITE_HEADER_SIZE];
-	cached_file->Read(header_buffer, SQLITE_HEADER_SIZE, 0);
-	if (memcmp(header_buffer, SQLITE_HEADER, SQLITE_HEADER_SIZE) != 0) {
+	// Use DuckDB's caching read API
+	data_ptr_t read_buffer;
+	auto buffer_handle = caching_handle->Read(read_buffer, SQLITE_HEADER_SIZE, 0);
+	if (memcmp(read_buffer, SQLITE_HEADER, SQLITE_HEADER_SIZE) != 0) {
 		throw InvalidInputException("File is not a valid SQLite database: %s", path);
 	}
 }
 
 void HttpSqliteFileHandle::Close() {
-	// Release cached file resources
-	cached_file.reset();
+	// Release caching handle resources
+	caching_handle.reset();
 }
 
 } // namespace duckdb
