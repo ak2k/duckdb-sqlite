@@ -36,10 +36,15 @@ public:
 	const string &GetPath() const { return path; }
 
 private:
+	// Lazy initialization - defer DuckDB operations until first use
+	void EnsureInitialized();
+
+	ClientContext &context;
 	string path;
 	unique_ptr<CachingFileHandle> caching_handle;
 	unique_ptr<FileHandle> base_handle;  // Unused - kept for potential future use
 	sqlite3_int64 cached_file_size;  // Cached to avoid repeated remote calls
+	bool initialized = false;
 	
 	// The following members are reserved for future adaptive read-ahead implementation.
 	// Currently, DuckDB's CachingFileSystem handles all caching automatically.

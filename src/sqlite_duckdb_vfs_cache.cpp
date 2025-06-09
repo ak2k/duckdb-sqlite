@@ -72,7 +72,17 @@ static void InitializeIOMethods() {
 //===--------------------------------------------------------------------===//
 
 DuckDBCachedFile::DuckDBCachedFile(ClientContext &context, const string &path) 
-    : path(path) {
+    : context(context), path(path), cached_file_size(-1), initialized(false) {
+	// Defer actual file opening until first use to avoid doing DuckDB operations
+	// during SQLite VFS callbacks, which might be in a different serialization context
+}
+
+DuckDBCachedFile::~DuckDBCachedFile() = default;
+
+void DuckDBCachedFile::EnsureInitialized() {
+	if (initialized) {
+		return;
+	}
 	
 	// Configure file flags for optimal caching behavior.
 	// Remote files use DIRECT_IO to bypass OS caching since DuckDB's
@@ -91,15 +101,21 @@ DuckDBCachedFile::DuckDBCachedFile(ClientContext &context, const string &path)
 	
 	// Cache the file size to avoid repeated remote calls
 	cached_file_size = caching_handle->GetFileSize();
+	initialized = true;
 }
-
-DuckDBCachedFile::~DuckDBCachedFile() = default;
 
 
 int DuckDBCachedFile::Read(void *buffer, int amount, sqlite3_int64 offset) {
 	// Early return for empty reads (SQLite sometimes requests 0 bytes)
 	if (!buffer || amount <= 0) {
 		return SQLITE_OK;
+	}
+	
+	// Ensure we're initialized before first read
+	try {
+		EnsureInitialized();
+	} catch (...) {
+		return SQLITE_IOERR_READ;
 	}
 	
 	// Safety check - should never happen in normal operation
@@ -140,6 +156,11 @@ int DuckDBCachedFile::Read(void *buffer, int amount, sqlite3_int64 offset) {
 }
 
 sqlite3_int64 DuckDBCachedFile::GetFileSize() {
+	try {
+		EnsureInitialized();
+	} catch (...) {
+		return -1;
+	}
 	return cached_file_size;
 }
 
