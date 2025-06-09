@@ -53,10 +53,9 @@ DuckDBCachedFile::DuckDBCachedFile(ClientContext &context, const string &path)
 		flags |= FileFlags::FILE_FLAGS_DIRECT_IO;
 	}
 	
-	// Open the file through DuckDB's CachingFileSystem which provides:
-	// - Automatic 1MB block caching for efficient remote access
-	// - Read-ahead for sequential access patterns
-	// - Shared cache across multiple connections
+	// Open the file through DuckDB's CachingFileSystem.
+	// The CachingFileSystem provides efficient caching of remote file data,
+	// though the actual read patterns are determined by our Read implementation.
 	auto caching_fs = CachingFileSystem::Get(context);
 	OpenFileInfo file_info(path);
 	caching_handle = caching_fs.OpenFile(file_info, flags);

@@ -22,7 +22,7 @@ namespace duckdb {
 class ClientContext;
 
 // Wrapper around DuckDB's CachingFileSystem for remote SQLite file access.
-// Provides efficient block-level caching with automatic read-ahead.
+// Uses DuckDB's caching infrastructure to efficiently handle remote file I/O.
 class DuckDBCachedFile {
 public:
 	DuckDBCachedFile(ClientContext &context, const string &path);
