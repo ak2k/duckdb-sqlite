@@ -12,9 +12,69 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Quick validation job to test workflow syntax and setup
+  validate-workflow:
+    name: Validate Workflow Syntax
+    runs-on: windows-2019
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: 'recursive'
+
+      - name: Test bash environment
+        shell: bash
+        run: |
+          echo "=== Testing bash environment ==="
+          echo "Current directory: $(pwd)"
+          echo "TEMP directory: $TEMP"
+          echo "PATH: $PATH"
+          
+      - name: Test Windows commands from bash
+        shell: bash
+        run: |
+          echo "=== Testing Windows command execution ==="
+          # Test that we can run Windows commands
+          cmd.exe /c "echo Hello from cmd.exe"
+          where.exe sqlite3 || echo "sqlite3 not found in PATH"
+          
+      - name: Test debugging setup commands
+        shell: bash
+        continue-on-error: true
+        run: |
+          echo "=== Testing debugging setup ==="
+          # Test registry access (may fail without admin)
+          cmd.exe /c 'reg query "HKLM\SOFTWARE\Microsoft\Windows\Windows Error Reporting" 2>nul' || echo "Cannot read HKLM (expected without admin)"
+          
+          # Test directory creation
+          mkdir -p "$TEMP/CrashDumps" && echo "Successfully created temp directory"
+          
+          # Test timeout command
+          timeout 2 echo "Timeout command works" || echo "Timeout command not available"
+          
+          # Test file pattern matching
+          echo "Test files found:"
+          ls test/sql/scanner/http_sqlite_*.test 2>/dev/null | head -5 || echo "No test files found yet"
+          
+      - name: Validate build tools
+        shell: bash
+        run: |
+          echo "=== Checking build tools ==="
+          where.exe cl.exe || echo "MSVC compiler not in PATH yet"
+          where.exe ninja || echo "Ninja not found"
+          where.exe ccache || echo "Ccache not found"
+          
+      - name: Summary
+        shell: bash
+        run: |
+          echo "=== Workflow validation complete ==="
+          echo "If this job succeeds, the basic workflow syntax and commands are correct."
+          echo "Any warnings above are noted for the main build job."
+
   # Temporary debug job for Windows SIGSEGV investigation
   windows-debug-test:
     name: Windows Debug Build for SIGSEGV Investigation
+    needs: validate-workflow  # Only run after validation passes
     runs-on: windows-2019
     env:
       VCPKG_TOOLCHAIN_PATH: ${{ github.workspace }}/vcpkg/scripts/buildsystems/vcpkg.cmake
@@ -101,11 +161,10 @@ jobs:
           sqlite3 data/db/tpch.db < data/sql/tpch-create.sqlite
           
           echo "=== Setting up Windows debugging environment ==="
-          # Enable Windows Error Reporting to generate dumps
-          reg add "HKLM\SOFTWARE\Microsoft\Windows\Windows Error Reporting\LocalDumps" /f
-          reg add "HKLM\SOFTWARE\Microsoft\Windows\Windows Error Reporting\LocalDumps" /v DumpFolder /t REG_EXPAND_SZ /d "%TEMP%\CrashDumps" /f
-          reg add "HKLM\SOFTWARE\Microsoft\Windows\Windows Error Reporting\LocalDumps" /v DumpType /t REG_DWORD /d 2 /f
-          reg add "HKLM\SOFTWARE\Microsoft\Windows\Windows Error Reporting\LocalDumps" /v DumpCount /t REG_DWORD /d 10 /f
+          # Try to enable crash dumps (may fail without admin rights)
+          echo "Attempting to configure Windows Error Reporting..."
+          # Use cmd.exe to run reg commands since we're in bash
+          cmd.exe /c 'reg add "HKLM\SOFTWARE\Microsoft\Windows\Windows Error Reporting\LocalDumps" /f' 2>/dev/null || echo "Note: Could not modify registry (non-admin)"
           
           # Create crash dump directory
           mkdir -p "$TEMP/CrashDumps" || true
