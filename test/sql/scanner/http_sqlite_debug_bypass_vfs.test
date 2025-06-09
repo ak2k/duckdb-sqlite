@@ -13,13 +13,13 @@ LOAD httpfs;
 # Test 1: Try to access an HTTP file directly through DuckDB
 # This bypasses our SQLite VFS entirely
 query I
-SELECT 1 FROM read_csv('https://raw.githubusercontent.com/duckdb/duckdb/main/data/csv/test.csv') LIMIT 1;
+SELECT 1 FROM read_csv('https://raw.githubusercontent.com/duckdb/duckdb/main/data/csv/test/test.csv') LIMIT 1;
 ----
 1
 
 # Test 2: Try a basic local SQLite file if one exists
 # This uses our extension but not HTTP
 query I
-SELECT COUNT(*) FROM sqlite_scan('data/db/chinook.db', 'Artist') WHERE 1=0;
+SELECT COUNT(*) FROM sqlite_scan('data/db/chinook.db', 'artists') WHERE 1=0;
 ----
 0
