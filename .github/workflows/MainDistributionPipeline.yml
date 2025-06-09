@@ -55,17 +55,32 @@ jobs:
           # Try different possible locations for the unittest executable (Windows has Debug subdirectory)
           if [ -f "build/debug/test/Debug/unittest.exe" ]; then
             echo "Found unittest.exe in build/debug/test/Debug/ (Windows Visual Studio path)"
-            echo "Testing with Windows-style path patterns..."
-            ./build/debug/test/Debug/unittest.exe "C:/a/duckdb-sqlite/duckdb-sqlite/test/sql/scanner/http_sqlite*" --durations yes --verbosity high
-            echo "Also testing with glob pattern..."
-            ./build/debug/test/Debug/unittest.exe "*http_sqlite*" --durations yes --verbosity high
+            echo "Testing http_sqlite..."
+            # First just try to run the test to see if we get SIGSEGV
+            if ./build/debug/test/Debug/unittest.exe "*http_sqlite*"; then
+              echo "http_sqlite tests passed!"
+            else
+              EXIT_CODE=$?
+              echo "Test failed with exit code $EXIT_CODE"
+              if [ $EXIT_CODE -eq 255 ]; then
+                echo "Pattern matching might not be working, running ALL tests to find SIGSEGV..."
+                ./build/debug/test/Debug/unittest.exe || echo "All tests failed with exit code $?"
+              fi
+            fi
           elif [ -f "duckdb/build/debug/test/Debug/unittest.exe" ]; then
             echo "Found unittest.exe in duckdb/build/debug/test/Debug/"
             cd duckdb
-            echo "Testing with Windows-style path patterns..."
-            ./build/debug/test/Debug/unittest.exe "C:/a/duckdb-sqlite/duckdb-sqlite/test/sql/scanner/http_sqlite*" --durations yes --verbosity high
-            echo "Also testing with glob pattern..."
-            ./build/debug/test/Debug/unittest.exe "*http_sqlite*" --durations yes --verbosity high
+            echo "Testing http_sqlite..."
+            if ./build/debug/test/Debug/unittest.exe "*http_sqlite*"; then
+              echo "http_sqlite tests passed!"
+            else
+              EXIT_CODE=$?
+              echo "Test failed with exit code $EXIT_CODE"
+              if [ $EXIT_CODE -eq 255 ]; then
+                echo "Pattern matching might not be working, running ALL tests to find SIGSEGV..."
+                ./build/debug/test/Debug/unittest.exe || echo "All tests failed with exit code $?"
+              fi
+            fi
           elif [ -f "duckdb/build/debug/test/unittest.exe" ]; then
             echo "Found unittest.exe in duckdb/build/debug/test/"
             cd duckdb

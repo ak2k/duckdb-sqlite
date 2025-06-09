@@ -64,8 +64,7 @@ DuckDBCachedFile::DuckDBCachedFile(ClientContext &context, const string &path)
 	cached_file_size = caching_handle->GetFileSize();
 }
 
-DuckDBCachedFile::~DuckDBCachedFile() {
-}
+DuckDBCachedFile::~DuckDBCachedFile() = default;
 
 
 int DuckDBCachedFile::Read(void *buffer, int amount, sqlite3_int64 offset) {
@@ -92,19 +91,14 @@ int DuckDBCachedFile::Read(void *buffer, int amount, sqlite3_int64 offset) {
 		
 		memcpy(buffer, read_buffer, amount);
 		return SQLITE_OK;
-	} catch (const std::exception &e) {
+	} catch (...) {
 		// Map all exceptions to SQLite I/O errors.
 		// DuckDB will have already logged the actual error details.
-		return SQLITE_IOERR_READ;
-	} catch (...) {
-		// Catch-all for any non-standard exceptions
 		return SQLITE_IOERR_READ;
 	}
 }
 
 sqlite3_int64 DuckDBCachedFile::GetFileSize() {
-	// Return the cached file size.
-	// This avoids repeated remote calls which can be expensive.
 	return cached_file_size;
 }
 
@@ -202,13 +196,8 @@ void SQLiteDuckDBCacheVFS::Register(ClientContext &context) {
 	return SQLITE_OK;
 
 int SQLiteDuckDBCacheVFS::Open(sqlite3_vfs *vfs, const char *filename, sqlite3_file *file, int flags, int *out_flags) {
-	// Basic parameter validation
-	if (!vfs || !filename || !file) {
-		return SQLITE_CANTOPEN;
-	}
-	
-	// Remote files are always read-only
-	if ((flags & SQLITE_OPEN_READONLY) == 0) {
+	// Validate parameters and ensure read-only access
+	if (!vfs || !filename || !file || (flags & SQLITE_OPEN_READONLY) == 0) {
 		return SQLITE_CANTOPEN;
 	}
 
@@ -234,8 +223,6 @@ int SQLiteDuckDBCacheVFS::Open(sqlite3_vfs *vfs, const char *filename, sqlite3_f
 		// Create the DuckDB file handle with proper exception handling
 		try {
 			duckdb_file->duckdb_file = make_uniq<DuckDBCachedFile>(*context, filename);
-		} catch (const std::exception &e) {
-			return SQLITE_CANTOPEN;
 		} catch (...) {
 			return SQLITE_CANTOPEN;
 		}
@@ -253,18 +240,10 @@ int SQLiteDuckDBCacheVFS::Open(sqlite3_vfs *vfs, const char *filename, sqlite3_f
 		}
 
 		return SQLITE_OK;
-	} catch (const HTTPException &e) {
-		// Map DuckDB exceptions to appropriate SQLite error codes
-		return SQLITE_CANTOPEN;
-	} catch (const IOException &e) {
-		return SQLITE_CANTOPEN;
 	} catch (const PermissionException &e) {
 		return SQLITE_PERM;
-	} catch (const Exception &e) {
-		return SQLITE_CANTOPEN;
-	} catch (const std::exception &e) {
-		return SQLITE_CANTOPEN;
 	} catch (...) {
+		// All other exceptions map to CANTOPEN
 		return SQLITE_CANTOPEN;
 	}
 }
@@ -342,6 +321,7 @@ void (*SQLiteDuckDBCacheVFS::DlSym(sqlite3_vfs *vfs, void *handle, const char *s
 }
 
 void SQLiteDuckDBCacheVFS::DlClose(sqlite3_vfs *vfs, void *handle) {
+	// No-op - dynamic libraries not supported
 }
 
 int SQLiteDuckDBCacheVFS::GetLastError(sqlite3_vfs *vfs, int bytes, char *err_msg) {
@@ -389,10 +369,6 @@ int SQLiteDuckDBCacheVFS::FileSize(sqlite3_file *file, sqlite3_int64 *size) {
 	try {
 		*size = duckdb_file->duckdb_file->GetFileSize();
 		return SQLITE_OK;
-	} catch (const Exception &e) {
-		return SQLITE_IOERR;
-	} catch (const std::exception &e) {
-		return SQLITE_IOERR;
 	} catch (...) {
 		return SQLITE_IOERR;
 	}
