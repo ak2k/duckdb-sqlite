@@ -70,9 +70,13 @@ class SQLiteDuckDBCacheVFS {
 public:
 	// Register the VFS with SQLite (thread-safe, idempotent)
 	static void Register(ClientContext &context);
+	// Unregister the VFS when context is destroyed
+	static void Unregister(ClientContext &context);
 	// Check if this path should be handled by our VFS (i.e., is it remote?)
 	static bool CanHandlePath(ClientContext &context, const string &path);
-	// Get the VFS registration name
+	// Get the VFS registration name for a context
+	static const char *GetVFSNameForContext(ClientContext &context);
+	// Get the default VFS registration name (for compatibility)
 	static const char *GetVFSName() { return "duckdb_cache_fs"; }
 
 	// SQLite VFS interface methods (must be public for C callback registration)

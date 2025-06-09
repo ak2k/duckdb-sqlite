@@ -87,7 +87,7 @@ SQLiteDB SQLiteDB::Open(const string &path, const SQLiteOpenOptions &options, Cl
 			}
 			flags |= SQLITE_OPEN_EXRESCODE;
 			
-			auto rc = sqlite3_open_v2(path.c_str(), &result.db, flags, SQLiteDuckDBCacheVFS::GetVFSName());
+			auto rc = sqlite3_open_v2(path.c_str(), &result.db, flags, SQLiteDuckDBCacheVFS::GetVFSNameForContext(context));
 			if (rc != SQLITE_OK) {
 				// SQLite failed to open the file. Try opening it directly with
 				// DuckDB's filesystem to get a more specific error message.
