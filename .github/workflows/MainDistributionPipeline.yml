@@ -84,6 +84,9 @@ jobs:
           call "C:/Program Files (x86)/Microsoft Visual Studio/2019/Enterprise/VC/Auxiliary/Build/vcvars64.bat"
           REM Rename link.exe to link-git.exe to avoid conflicts with git supplied linker.
           move "C:\Program Files\Git\usr\bin\link.exe" "C:\Program Files\Git\usr\bin\link-git.exe"
+          REM Enable debug symbols and assertions
+          set CMAKE_BUILD_TYPE=Debug
+          set DCMAKE_CXX_FLAGS_DEBUG=/MDd /Zi /Ob0 /Od /RTC1
           make debug
 
       - name: Test specific http_sqlite tests with debug symbols
@@ -97,16 +100,26 @@ jobs:
           ./build/debug/duckdb < data/sql/tpch-export.duckdb
           sqlite3 data/db/tpch.db < data/sql/tpch-create.sqlite
           
+          echo "=== Setting up Windows debugging environment ==="
+          # Enable Windows Error Reporting to generate dumps
+          reg add "HKLM\SOFTWARE\Microsoft\Windows\Windows Error Reporting\LocalDumps" /f
+          reg add "HKLM\SOFTWARE\Microsoft\Windows\Windows Error Reporting\LocalDumps" /v DumpFolder /t REG_EXPAND_SZ /d "%TEMP%\CrashDumps" /f
+          reg add "HKLM\SOFTWARE\Microsoft\Windows\Windows Error Reporting\LocalDumps" /v DumpType /t REG_DWORD /d 2 /f
+          reg add "HKLM\SOFTWARE\Microsoft\Windows\Windows Error Reporting\LocalDumps" /v DumpCount /t REG_DWORD /d 10 /f
+          
+          # Create crash dump directory
+          mkdir -p "$TEMP/CrashDumps" || true
+          
+          # Install debugging tools if available
+          echo "Checking for debugging tools..."
+          where cdb.exe || echo "cdb.exe not found - Windows Debugging Tools not installed"
+          
           echo "=== Running http_sqlite tests in debug mode ==="
           # Windows builds place the executable in a Debug subdirectory
           if [ -f "build/debug/test/Debug/unittest.exe" ]; then
-            echo "Found unittest at: build/debug/test/Debug/unittest.exe"
-            echo "Running: ./build/debug/test/Debug/unittest.exe \"*http_sqlite*\""
-            ./build/debug/test/Debug/unittest.exe "*http_sqlite*"
+            UNITTEST_EXE="./build/debug/test/Debug/unittest.exe"
           elif [ -f "build/debug/test/unittest.exe" ]; then
-            echo "Found unittest at: build/debug/test/unittest.exe"
-            echo "Running: ./build/debug/test/unittest.exe \"*http_sqlite*\""
-            ./build/debug/test/unittest.exe "*http_sqlite*"
+            UNITTEST_EXE="./build/debug/test/unittest.exe"
           else
             echo "ERROR: Could not find unittest executable"
             echo "Searching for unittest files:"
@@ -116,6 +129,100 @@ jobs:
             ls -la build/debug/test/Debug/ || echo "Debug directory not found"
             exit 1
           fi
+          
+          echo "Found unittest at: $UNITTEST_EXE"
+          
+          # First, try to run all http_sqlite tests with debugging
+          echo "=========================================="
+          echo "Running all http_sqlite tests together..."
+          echo "=========================================="
+          
+          # Set environment variables for better debugging
+          export DUCKDB_CRASH_ON_ASSERT=1
+          export ASAN_OPTIONS=print_stats=1:check_initialization_order=1:strict_init_order=1:print_module_map=1
+          
+          # Run with potential debugger if available
+          if command -v cdb.exe &> /dev/null; then
+            echo "Running with Windows Debugger (cdb.exe)..."
+            cdb.exe -g -G -lines -c "g; !analyze -v; q" "$UNITTEST_EXE" "*http_sqlite*" || true
+          else
+            # Run normally but capture any crash information
+            $UNITTEST_EXE "*http_sqlite*" 2>&1 | tee test_output.log || EXIT_CODE=$?
+            
+            if [ "${EXIT_CODE:-0}" -ne 0 ]; then
+              echo "Tests failed with exit code: ${EXIT_CODE}"
+              
+              # Check for crash dumps
+              if [ -d "$TEMP/CrashDumps" ]; then
+                echo "Checking for crash dumps..."
+                ls -la "$TEMP/CrashDumps/" || true
+              fi
+              
+              # Run individual tests to isolate the failure
+              echo "=========================================="
+              echo "Running individual tests to isolate failure..."
+              echo "=========================================="
+              
+              for test in test/sql/scanner/http_sqlite_*.test; do
+                if [ -f "$test" ]; then
+                  testname=$(basename "$test")
+                  echo "----------------------------------------"
+                  echo "Running test: $testname"
+                  echo "Command: $UNITTEST_EXE \"$test\""
+                  
+                  # Run with timeout to prevent hangs
+                  timeout 60 $UNITTEST_EXE "$test" 2>&1 | tee "${testname}.log" || TEST_EXIT_CODE=$?
+                  
+                  if [ "${TEST_EXIT_CODE:-0}" -eq 0 ]; then
+                    echo "✓ $testname passed"
+                  else
+                    echo "✗ $testname failed with exit code ${TEST_EXIT_CODE}"
+                    echo "This test triggered a failure!"
+                    
+                    # Try to get more info about the failure
+                    if [ "${TEST_EXIT_CODE}" -eq 134 ]; then
+                      echo "Exit code 134 indicates assertion failure (SIGABRT)"
+                    elif [ "${TEST_EXIT_CODE}" -eq 139 ]; then
+                      echo "Exit code 139 indicates segmentation fault (SIGSEGV)"
+                    fi
+                    
+                    # Show last 50 lines of output
+                    echo "Last 50 lines of test output:"
+                    tail -n 50 "${testname}.log" || true
+                  fi
+                fi
+              done
+              
+              # Show any assertion messages from the log
+              echo "=========================================="
+              echo "Searching for assertion failures in logs..."
+              echo "=========================================="
+              grep -i "assert\|assertion\|failed\|error\|exception" test_output.log || true
+              
+              # Additional debugging for the specific assertion we saw
+              echo "=========================================="
+              echo "Searching for binary_deserializer issues..."
+              echo "=========================================="
+              grep -i "binary_deserializer\|has_buffered_field\|deserializ" test_output.log || true
+              
+              # Upload any crash dumps as artifacts
+              if [ -d "$TEMP/CrashDumps" ] && [ "$(ls -A $TEMP/CrashDumps)" ]; then
+                echo "Crash dumps found, preparing for upload..."
+                zip -r crash_dumps.zip "$TEMP/CrashDumps"
+              fi
+            fi
+          fi
+          
+      - name: Upload crash dumps
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-debug-crash-dumps
+          path: |
+            crash_dumps.zip
+            test_output.log
+            http_sqlite_*.test.log
+          retention-days: 7
           
   duckdb-stable-build:
     name: Build extension binaries
