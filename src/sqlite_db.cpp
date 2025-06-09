@@ -46,6 +46,8 @@ SQLiteDB SQLiteDB::Open(const string &path, const SQLiteOpenOptions &options, bo
 	if (!is_shared) {
 		// Disable SQLite's internal mutex for single-threaded access.
 		// Each connection should only be used by one thread at a time.
+		// FIXME: we should just make sure we are not re-using the same `sqlite3`
+		// object across threads
 		flags |= SQLITE_OPEN_NOMUTEX;
 	}
 	flags |= SQLITE_OPEN_EXRESCODE;
@@ -79,6 +81,8 @@ SQLiteDB SQLiteDB::Open(const string &path, const SQLiteOpenOptions &options, Cl
 			SQLiteDB result;
 			int flags = SQLITE_OPEN_PRIVATECACHE | SQLITE_OPEN_READONLY;
 			if (!is_shared) {
+				// FIXME: we should just make sure we are not re-using the same `sqlite3`
+				// object across threads
 				flags |= SQLITE_OPEN_NOMUTEX;
 			}
 			flags |= SQLITE_OPEN_EXRESCODE;
