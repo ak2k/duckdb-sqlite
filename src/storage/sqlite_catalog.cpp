@@ -57,12 +57,11 @@ SQLiteDB *SQLiteCatalog::GetInMemoryDatabase(ClientContext &context) {
 	}
 	lock_guard<mutex> l(in_memory_lock);
 	if (!in_memory_db_initialized) {
-		// Lazy initialization of in-memory database
+		// Initialize the database connection on first use.
+		// Remote databases require the context for VFS registration.
 		if (FileSystem::IsRemoteFile(path)) {
-			// For remote paths, use the special Open method with context
 			in_memory_db = SQLiteDB::Open(path, options, context, true);
 		} else {
-			// Regular :memory: database
 			in_memory_db = SQLiteDB::Open(path, options, true);
 		}
 		in_memory_db_initialized = true;

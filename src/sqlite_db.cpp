@@ -44,8 +44,8 @@ SQLiteDB SQLiteDB::Open(const string &path, const SQLiteOpenOptions &options, bo
 		flags |= SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE;
 	}
 	if (!is_shared) {
-		// FIXME: we should just make sure we are not re-using the same `sqlite3`
-		// object across threads
+		// Disable SQLite's internal mutex for single-threaded access.
+		// Each connection should only be used by one thread at a time.
 		flags |= SQLITE_OPEN_NOMUTEX;
 	}
 	flags |= SQLITE_OPEN_EXRESCODE;
@@ -70,11 +70,11 @@ SQLiteDB SQLiteDB::Open(const string &path, const SQLiteOpenOptions &options, bo
 }
 
 SQLiteDB SQLiteDB::Open(const string &path, const SQLiteOpenOptions &options, ClientContext &context, bool is_shared) {
-	// Handle remote SQLite databases via VFS for efficient block-level access
+	// Remote SQLite databases are accessed through our custom VFS
+	// which uses DuckDB's CachingFileSystem for efficient block caching
 	if (FileSystem::IsRemoteFile(path)) {
 		if (SQLiteDuckDBCacheVFS::CanHandlePath(context, path)) {
-			// Let DuckDB's CachingFileSystem handle remote file validation naturally
-			// This leverages DuckDB's robust error handling for all remote protocols
+			// Register our VFS to handle this remote file
 			SQLiteDuckDBCacheVFS::Register(context);
 			SQLiteDB result;
 			int flags = SQLITE_OPEN_PRIVATECACHE | SQLITE_OPEN_READONLY;
@@ -85,26 +85,27 @@ SQLiteDB SQLiteDB::Open(const string &path, const SQLiteOpenOptions &options, Cl
 			
 			auto rc = sqlite3_open_v2(path.c_str(), &result.db, flags, SQLiteDuckDBCacheVFS::GetVFSName());
 			if (rc != SQLITE_OK) {
-				// For remote files, try to provide a more informative error message
-				// by attempting to access the file directly with DuckDB's filesystem
+				// SQLite failed to open the file. Try opening it directly with
+				// DuckDB's filesystem to get a more specific error message.
 				try {
-					// Try to access the file with DuckDB's filesystem to get the real error
 					auto &fs = context.db->GetFileSystem();
-					auto file_handle = fs.OpenFile(path, FileFlags::FILE_FLAGS_READ); // This will trigger HTTP requests
+					auto file_handle = fs.OpenFile(path, FileFlags::FILE_FLAGS_READ);
 				} catch (const HTTPException &e) {
-					throw HTTPException(e.what()); // Preserve DuckDB's HTTP error
+					// Re-throw HTTP errors with their original message
+					throw HTTPException(e.what());
 				} catch (const Exception &e) {
-					throw; // Just re-throw the original DuckDB exception
+					// Re-throw other DuckDB exceptions as-is
+					throw;
 				} catch (...) {
-					// Fallback to SQLite error
+					// Fall back to SQLite's error message
 					throw ConnectionException("Unable to open database \"%s\": %s", path, sqlite3_errstr(rc));
 				}
 				
-				// If no exception was thrown from OpenFile, use SQLite error  
+				// If OpenFile succeeded but SQLite failed, report SQLite's error
 				throw ConnectionException("Unable to open database \"%s\": %s", path, sqlite3_errstr(rc));
 			}
 			
-			// Apply busy timeout if specified
+			// Apply busy timeout setting
 			if (options.busy_timeout > 0) {
 				if (options.busy_timeout > NumericLimits<int>::Maximum()) {
 					throw BinderException("busy_timeout out of range - must be within valid range for type int");
@@ -115,14 +116,13 @@ SQLiteDB SQLiteDB::Open(const string &path, const SQLiteOpenOptions &options, Cl
 				}
 			}
 			
-			// HTTP databases are read-only
 			return result;
 		} else {
-			// Fallback to regular file opening
+			// Path not supported by our VFS - use standard SQLite
 			return Open(path, options, is_shared);
 		}
 	} else {
-		// Use standard file opening for local files
+		// Local files use standard SQLite file handling
 		return Open(path, options, is_shared);
 	}
 }

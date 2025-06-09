@@ -21,37 +21,56 @@ namespace duckdb {
 
 class ClientContext;
 
-// Remote file access using DuckDB's CachingFileSystem
+// Wrapper around DuckDB's CachingFileSystem for remote SQLite file access.
+// Provides efficient block-level caching with automatic read-ahead.
 class DuckDBCachedFile {
 public:
 	DuckDBCachedFile(ClientContext &context, const string &path);
 	~DuckDBCachedFile();
 
-	//! Read data from the file using DuckDB's CachingFileSystem
+	// Read data from the file at the specified offset
 	int Read(void *buffer, int amount, sqlite3_int64 offset);
-	//! Get the file size
+	// Get the cached file size
 	sqlite3_int64 GetFileSize();
-	//! Get the path
+	// Get the file path
 	const string &GetPath() const { return path; }
 
 private:
 	string path;
 	unique_ptr<CachingFileHandle> caching_handle;
-	unique_ptr<FileHandle> base_handle;  // Direct filesystem handle for testing
-	sqlite3_int64 cached_file_size;  // Cache file size to avoid repeated calls
+	unique_ptr<FileHandle> base_handle;  // Unused - kept for potential future use
+	sqlite3_int64 cached_file_size;  // Cached to avoid repeated remote calls
+	
+	// The following members are reserved for future adaptive read-ahead implementation.
+	// Currently, DuckDB's CachingFileSystem handles all caching automatically.
+	mutable std::mutex readahead_mutex;
+	sqlite3_int64 last_read_offset;
+	sqlite3_int64 last_read_end;
+	uint64_t current_readahead_size;
+	
+	// Read-ahead size constants (not currently used)
+	static constexpr uint64_t MIN_READAHEAD_SIZE = 1024 * 1024;       // 1MB
+	static constexpr uint64_t MAX_READAHEAD_SIZE = 128 * 1024 * 1024; // 128MB
+	static constexpr uint64_t SEQUENTIAL_THRESHOLD = 64 * 1024;       // 64KB
+	
+	// Future read-ahead methods (not implemented)
+	uint64_t CalculateReadAheadSize(sqlite3_int64 offset, int amount) const;
+	bool IsSequentialRead(sqlite3_int64 offset) const;
+	void UpdateReadAheadState(sqlite3_int64 offset, int amount);
 };
 
-// SQLite VFS implementation for remote file access through DuckDB
+// SQLite Virtual File System (VFS) implementation that uses DuckDB's
+// CachingFileSystem for efficient remote SQLite database access.
 class SQLiteDuckDBCacheVFS {
 public:
-	//! Register the cached DuckDB VFS with SQLite
+	// Register the VFS with SQLite (thread-safe, idempotent)
 	static void Register(ClientContext &context);
-	//! Check if DuckDB can handle this path
+	// Check if this path should be handled by our VFS (i.e., is it remote?)
 	static bool CanHandlePath(ClientContext &context, const string &path);
-	//! Get the VFS name
+	// Get the VFS registration name
 	static const char *GetVFSName() { return "duckdb_cache_fs"; }
 
-	//! VFS methods - must be public for static initialization
+	// SQLite VFS interface methods (must be public for C callback registration)
 	static int Open(sqlite3_vfs *vfs, const char *filename, sqlite3_file *file, int flags, int *out_flags);
 	static int Delete(sqlite3_vfs *vfs, const char *filename, int sync_dir);
 	static int Access(sqlite3_vfs *vfs, const char *filename, int flags, int *result);
@@ -65,7 +84,7 @@ public:
 	static int CurrentTime(sqlite3_vfs *vfs, double *time);
 	static int GetLastError(sqlite3_vfs *vfs, int bytes, char *err_msg);
 
-	//! File methods - must be public for static initialization
+	// SQLite file I/O methods (must be public for C callback registration)
 	static int Close(sqlite3_file *file);
 	static int Read(sqlite3_file *file, void *buffer, int amount, sqlite3_int64 offset);
 	static int Write(sqlite3_file *file, const void *buffer, int amount, sqlite3_int64 offset);
@@ -80,18 +99,18 @@ public:
 	static int DeviceCharacteristics(sqlite3_file *file);
 
 private:
-	// VFS registration is managed by SQLite internally
+	// No private members - all state is managed through static methods
 };
 
-//! SQLite file structure for DuckDB cached files
-//! Ensure proper alignment for cross-platform compatibility
+// SQLite file handle structure that wraps our DuckDBCachedFile.
+// Memory layout must be compatible with SQLite's expectations.
 #ifdef _WIN32
 #pragma pack(push, 8)
 #endif
 struct SQLiteDuckDBCachedFile {
-	sqlite3_file base;  // Must be first
-	unique_ptr<DuckDBCachedFile> duckdb_file;
-	ClientContext *context; // Context for this file handle
+	sqlite3_file base;  // Must be first member for C compatibility
+	unique_ptr<DuckDBCachedFile> duckdb_file;  // The actual file implementation
+	ClientContext *context;  // DuckDB context for this file
 #ifdef _WIN32
 } __declspec(align(8));
 #pragma pack(pop)
