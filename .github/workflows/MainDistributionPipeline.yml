@@ -55,10 +55,16 @@ jobs:
           # Try different possible locations for the unittest executable (Windows has Debug subdirectory)
           if [ -f "build/debug/test/Debug/unittest.exe" ]; then
             echo "Found unittest.exe in build/debug/test/Debug/ (Windows Visual Studio path)"
+            echo "Testing with Windows-style path patterns..."
+            ./build/debug/test/Debug/unittest.exe "C:/a/duckdb-sqlite/duckdb-sqlite/test/sql/scanner/http_sqlite*" --durations yes --verbosity high
+            echo "Also testing with glob pattern..."
             ./build/debug/test/Debug/unittest.exe "*http_sqlite*" --durations yes --verbosity high
           elif [ -f "duckdb/build/debug/test/Debug/unittest.exe" ]; then
             echo "Found unittest.exe in duckdb/build/debug/test/Debug/"
             cd duckdb
+            echo "Testing with Windows-style path patterns..."
+            ./build/debug/test/Debug/unittest.exe "C:/a/duckdb-sqlite/duckdb-sqlite/test/sql/scanner/http_sqlite*" --durations yes --verbosity high
+            echo "Also testing with glob pattern..."
             ./build/debug/test/Debug/unittest.exe "*http_sqlite*" --durations yes --verbosity high
           elif [ -f "duckdb/build/debug/test/unittest.exe" ]; then
             echo "Found unittest.exe in duckdb/build/debug/test/"
