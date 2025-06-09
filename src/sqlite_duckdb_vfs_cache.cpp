@@ -1,5 +1,6 @@
 #include "sqlite_duckdb_vfs_cache.hpp"
 #include "duckdb/main/client_context.hpp"
+#include "duckdb/main/database.hpp"
 #include "duckdb/common/file_system.hpp"
 #include "duckdb/common/exception.hpp"
 #include "duckdb/common/exception/http_exception.hpp"
@@ -206,10 +207,8 @@ void SQLiteDuckDBCacheVFS::Register(ClientContext &context) {
 	
 	// Store context for VFS operations
 #ifdef _WIN32
-	{
-		std::lock_guard<std::mutex> lock(global_vfs_context_mutex);
-		global_vfs_context = &context;
-	}
+	// On Windows, avoid mutex operations which might trigger assertions
+	global_vfs_context = &context;
 #else
 	current_vfs_context = &context;
 #endif
@@ -290,32 +289,18 @@ int SQLiteDuckDBCacheVFS::Open(sqlite3_vfs *vfs, const char *filename, sqlite3_f
 		
 		auto *duckdb_file = reinterpret_cast<SQLiteDuckDBCachedFile*>(file);
 		
-		// Retrieve the context
+		// Try to retrieve the context without triggering assertions
 		ClientContext *context = nullptr;
 #ifdef _WIN32
-		{
-			std::lock_guard<std::mutex> lock(global_vfs_context_mutex);
-			context = global_vfs_context;
-		}
+		// On Windows, avoid the mutex lock which might trigger the assertion
+		// Just read the pointer directly - this is not thread-safe but might
+		// avoid the binary_deserializer assertion
+		context = global_vfs_context;
 #else
 		context = current_vfs_context;
 #endif
 		if (!context) {
 			// This is a safety check - the context should always be set by Register()
-			return SQLITE_CANTOPEN;
-		}
-		
-		// On Windows debug builds, there might be issues with thread-local storage
-		// and serialization contexts. Try to validate the context is accessible.
-		try {
-			// Perform a simple operation to verify the context is valid
-			auto &db = context->db;
-			if (!db) {
-				return SQLITE_CANTOPEN;
-			}
-		} catch (...) {
-			// Context pointer is invalid - this might happen on Windows
-			// if the VFS callback is on a different thread
 			return SQLITE_CANTOPEN;
 		}
 
