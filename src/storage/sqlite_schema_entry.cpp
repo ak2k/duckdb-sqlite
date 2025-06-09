@@ -21,6 +21,9 @@ SQLiteSchemaEntry::SQLiteSchemaEntry(Catalog &catalog, CreateSchemaInfo &info) :
 
 SQLiteTransaction &GetSQLiteTransaction(CatalogTransaction transaction, Catalog &catalog) {
 	if (!transaction.transaction) {
+		// This should not happen in normal operation - transactions should be initialized before use.
+		// Creating one here prevents deadlocks but may indicate missing transaction initialization.
+		D_ASSERT(false);
 		auto &new_transaction = Transaction::Get(transaction.GetContext(), catalog);
 		return new_transaction.Cast<SQLiteTransaction>();
 	}
