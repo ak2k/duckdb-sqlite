@@ -101,6 +101,28 @@ void DuckDBCachedFile::EnsureInitialized() {
 	
 	// Cache the file size to avoid repeated remote calls
 	cached_file_size = caching_handle->GetFileSize();
+	
+	// Now validate this is actually a SQLite database file
+	// This is deferred from Open() to avoid DuckDB operations in VFS callbacks
+	constexpr char SQLITE_HEADER[] = "SQLite format 3\000";
+	constexpr size_t SQLITE_HEADER_SIZE = 16;
+	
+	// Read the SQLite file header directly through our caching handle
+	char header_buffer[SQLITE_HEADER_SIZE];
+	data_ptr_t read_buffer = nullptr;
+	auto buffer_handle = caching_handle->Read(read_buffer, SQLITE_HEADER_SIZE, 0);
+	
+	if (!read_buffer) {
+		throw InvalidInputException("Failed to read file header");
+	}
+	
+	memcpy(header_buffer, read_buffer, SQLITE_HEADER_SIZE);
+	
+	// Ensure this is actually a SQLite database file
+	if (memcmp(header_buffer, SQLITE_HEADER, SQLITE_HEADER_SIZE) != 0) {
+		throw InvalidInputException("File is not a valid SQLite database");
+	}
+	
 	initialized = true;
 }
 
@@ -164,25 +186,6 @@ sqlite3_int64 DuckDBCachedFile::GetFileSize() {
 	return cached_file_size;
 }
 
-static void ValidateSQLiteHeader(DuckDBCachedFile &file) {
-	// SQLite database files always start with a 16-byte magic header.
-	// This validation ensures we don't try to open non-SQLite files.
-	constexpr char SQLITE_HEADER[] = "SQLite format 3\000";
-	constexpr size_t SQLITE_HEADER_SIZE = 16;
-	
-	// Read and validate the SQLite file header
-	char header_buffer[SQLITE_HEADER_SIZE];
-	int result = file.Read(header_buffer, SQLITE_HEADER_SIZE, 0);
-	
-	if (result != SQLITE_OK) {
-		throw InvalidInputException("Failed to read file header");
-	}
-	
-	// Ensure this is actually a SQLite database file
-	if (memcmp(header_buffer, SQLITE_HEADER, SQLITE_HEADER_SIZE) != 0) {
-		throw InvalidInputException("File is not a valid SQLite database");
-	}
-}
 
 //===--------------------------------------------------------------------===//
 // SQLiteDuckDBCacheVFS Implementation
@@ -330,16 +333,8 @@ int SQLiteDuckDBCacheVFS::Open(sqlite3_vfs *vfs, const char *filename, sqlite3_f
 			return SQLITE_CANTOPEN;
 		}
 		
-		// Verify this is actually a SQLite database file.
-		// This prevents SQLite from trying to interpret arbitrary files.
-		try {
-			ValidateSQLiteHeader(*duckdb_file->duckdb_file);
-		} catch (const Exception &e) {
-			// Clean up on failure
-			duckdb_file->duckdb_file.reset();
-			memset(duckdb_file, 0, sizeof(SQLiteDuckDBCachedFile));
-			return SQLITE_CANTOPEN;
-		}
+		// Don't validate SQLite header here - defer until first read
+		// to avoid triggering DuckDB operations in VFS callbacks
 
 		if (out_flags) {
 			*out_flags = flags;
@@ -367,38 +362,15 @@ int SQLiteDuckDBCacheVFS::Access(sqlite3_vfs *vfs, const char *filename, int fla
 	// Initialize result to safe default
 	*result = 0;
 
+	// For remote files, we can't easily check existence without potentially
+	// triggering DuckDB operations in the wrong context. SQLite will handle
+	// the error when it tries to open a non-existent file.
+	// 
+	// Return 0 (file doesn't exist) for all remote files to be safe.
+	// SQLite will attempt to open the file anyway and handle any errors.
 	if (flags == SQLITE_ACCESS_EXISTS) {
-		try {
-			// Use DuckDB's filesystem to check file existence
-			ClientContext *context = nullptr;
-#ifdef _WIN32
-			{
-				std::lock_guard<std::mutex> lock(global_vfs_context_mutex);
-				context = global_vfs_context;
-			}
-#else
-			context = current_vfs_context;
-#endif
-			
-			if (context) {
-				// Validate context is accessible
-				try {
-					auto &db = context->db;
-					if (db) {
-						auto &fs = db->GetFileSystem();
-						*result = fs.FileExists(filename) ? 1 : 0;
-					}
-				} catch (...) {
-					// Context is invalid - file doesn't exist from our perspective
-					*result = 0;
-				}
-			} else {
-				// No context - file doesn't exist from our perspective
-				*result = 0;
-			}
-		} catch (...) {
-			*result = 0;
-		}
+		// Always return 0 for remote files to avoid DuckDB operations
+		*result = 0;
 	} else {
 		// Remote files don't support write or delete access
 		*result = 0;
