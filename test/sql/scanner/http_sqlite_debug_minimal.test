@@ -1,0 +1,29 @@
+# name: test/sql/scanner/http_sqlite_debug_minimal.test
+# description: Minimal test to debug Windows assertion failure
+# group: [sqlite_scanner]
+
+require sqlite_scanner
+
+statement ok
+INSTALL httpfs;
+
+statement ok
+LOAD httpfs;
+
+# Test 1: Just try to open a small known SQLite file
+# Using a very small SQLite database to minimize variables
+statement ok
+SELECT 1 WHERE 1=0;
+
+# Test 2: Try a simple query that doesn't actually read data
+query I
+SELECT 1;
+----
+1
+
+# Test 3: Try to read from a minimal HTTP SQLite database
+# This should trigger the assertion if it's related to HTTP handling
+query I
+SELECT COUNT(*) FROM sqlite_scan('https://github.com/lerocha/chinook-database/raw/refs/heads/master/ChinookDatabase/DataSources/Chinook_Sqlite.sqlite', 'Artist');
+----
+275

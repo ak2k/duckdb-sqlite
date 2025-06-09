@@ -191,7 +191,20 @@ jobs:
           
           echo "Found unittest at: $UNITTEST_EXE"
           
-          # First, try to run all http_sqlite tests with debugging
+          # First, try the minimal debug test to isolate the issue
+          echo "=========================================="
+          echo "Running minimal debug test first..."
+          echo "=========================================="
+          
+          if $UNITTEST_EXE "test/sql/scanner/http_sqlite_debug_minimal.test" 2>&1 | tee minimal_test.log; then
+            echo "✓ Minimal test passed - issue might be specific to certain queries"
+          else
+            echo "✗ Minimal test failed - issue happens immediately"
+            echo "Last 20 lines of output:"
+            tail -n 20 minimal_test.log || true
+          fi
+          
+          # Then try to run all http_sqlite tests with debugging
           echo "=========================================="
           echo "Running all http_sqlite tests together..."
           echo "=========================================="
@@ -199,6 +212,17 @@ jobs:
           # Set environment variables for better debugging
           export DUCKDB_CRASH_ON_ASSERT=1
           export ASAN_OPTIONS=print_stats=1:check_initialization_order=1:strict_init_order=1:print_module_map=1
+          
+          # Additional debugging for binary deserializer issue
+          echo "=========================================="
+          echo "System information for debugging:"
+          echo "=========================================="
+          echo "Processor architecture: $PROCESSOR_ARCHITECTURE"
+          echo "Windows version:"
+          cmd.exe /c "ver"
+          echo "Current directory: $(pwd)"
+          echo "DuckDB build directory structure:"
+          ls -la build/debug/extension/sqlite_scanner/ || true
           
           # Run with potential debugger if available
           if command -v cdb.exe &> /dev/null; then
