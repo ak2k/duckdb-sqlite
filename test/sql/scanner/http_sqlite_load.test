@@ -1,0 +1,12 @@
+# name: test/sql/scanner/http_sqlite_load.test
+# description: Test INSTALL and LOAD httpfs
+# group: [sqlite_scanner]
+
+require sqlite_scanner
+
+# Test INSTALL and LOAD
+statement ok
+INSTALL httpfs;
+
+statement ok
+LOAD httpfs;
