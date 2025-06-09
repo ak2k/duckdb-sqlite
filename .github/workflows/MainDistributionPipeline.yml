@@ -27,10 +27,15 @@ jobs:
         with:
           vcpkgGitCommitId: 5e5d0e1cd7785623065e77eff011afdeec1a3574
       
-      - name: Build extension in debug mode with Ninja
+      - name: Setup MSVC
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+      
+      - name: Build extension in debug mode with MSVC
         shell: bash
         run: |
-          make GEN=ninja debug
+          make GEN=ninja VCPKG_TOOLCHAIN_PATH=${{ env.VCPKG_ROOT }}/scripts/buildsystems/vcpkg.cmake VCPKG_TARGET_TRIPLET=x64-windows-static-md debug
       
       - name: Setup test database
         shell: bash
