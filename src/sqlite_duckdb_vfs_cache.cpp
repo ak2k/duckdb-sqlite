@@ -11,32 +11,52 @@ namespace duckdb {
 // Thread-local storage for the current ClientContext pointer.
 // This allows VFS callbacks to access the DuckDB context without storing it in the VFS itself,
 // preventing use-after-free issues when contexts are destroyed.
+#ifdef _WIN32
+// On Windows, thread-local storage in DLLs can be problematic, especially when
+// callbacks cross DLL boundaries. We use __declspec(thread) for better compatibility.
+__declspec(thread) ClientContext* current_vfs_context = nullptr;
+#else
 thread_local ClientContext* current_vfs_context = nullptr;
+#endif
 
 // SQLite page size constant for sector size calculations
 static constexpr int DEFAULT_SQLITE_SECTOR_SIZE = 4096;
 
-static const sqlite3_io_methods duckdb_cache_io_methods = {
-    1,                                         // iVersion
-    SQLiteDuckDBCacheVFS::Close,               // xClose
-    SQLiteDuckDBCacheVFS::Read,                // xRead
-    SQLiteDuckDBCacheVFS::Write,               // xWrite
-    SQLiteDuckDBCacheVFS::Truncate,            // xTruncate
-    SQLiteDuckDBCacheVFS::Sync,                // xSync
-    SQLiteDuckDBCacheVFS::FileSize,            // xFileSize
-    SQLiteDuckDBCacheVFS::Lock,                // xLock
-    SQLiteDuckDBCacheVFS::Unlock,              // xUnlock
-    SQLiteDuckDBCacheVFS::CheckReservedLock,   // xCheckReservedLock
-    SQLiteDuckDBCacheVFS::FileControl,         // xFileControl
-    SQLiteDuckDBCacheVFS::SectorSize,          // xSectorSize
-    SQLiteDuckDBCacheVFS::DeviceCharacteristics, // xDeviceCharacteristics
-    nullptr,                                   // xShmMap
-    nullptr,                                   // xShmLock
-    nullptr,                                   // xShmBarrier
-    nullptr,                                   // xShmUnmap
-    nullptr,                                   // xFetch
-    nullptr                                    // xUnfetch
-};
+// Forward declare the io_methods structure - will be initialized at runtime
+// to avoid static initialization order issues on Windows
+static sqlite3_io_methods duckdb_cache_io_methods = {};
+static bool io_methods_initialized = false;
+
+static void InitializeIOMethods() {
+	if (io_methods_initialized) {
+		return;
+	}
+	
+	memset(&duckdb_cache_io_methods, 0, sizeof(duckdb_cache_io_methods));
+	
+	duckdb_cache_io_methods.iVersion = 1;
+	duckdb_cache_io_methods.xClose = SQLiteDuckDBCacheVFS::Close;
+	duckdb_cache_io_methods.xRead = SQLiteDuckDBCacheVFS::Read;
+	duckdb_cache_io_methods.xWrite = SQLiteDuckDBCacheVFS::Write;
+	duckdb_cache_io_methods.xTruncate = SQLiteDuckDBCacheVFS::Truncate;
+	duckdb_cache_io_methods.xSync = SQLiteDuckDBCacheVFS::Sync;
+	duckdb_cache_io_methods.xFileSize = SQLiteDuckDBCacheVFS::FileSize;
+	duckdb_cache_io_methods.xLock = SQLiteDuckDBCacheVFS::Lock;
+	duckdb_cache_io_methods.xUnlock = SQLiteDuckDBCacheVFS::Unlock;
+	duckdb_cache_io_methods.xCheckReservedLock = SQLiteDuckDBCacheVFS::CheckReservedLock;
+	duckdb_cache_io_methods.xFileControl = SQLiteDuckDBCacheVFS::FileControl;
+	duckdb_cache_io_methods.xSectorSize = SQLiteDuckDBCacheVFS::SectorSize;
+	duckdb_cache_io_methods.xDeviceCharacteristics = SQLiteDuckDBCacheVFS::DeviceCharacteristics;
+	// Shared memory methods not needed for read-only remote files
+	duckdb_cache_io_methods.xShmMap = nullptr;
+	duckdb_cache_io_methods.xShmLock = nullptr;
+	duckdb_cache_io_methods.xShmBarrier = nullptr;
+	duckdb_cache_io_methods.xShmUnmap = nullptr;
+	duckdb_cache_io_methods.xFetch = nullptr;
+	duckdb_cache_io_methods.xUnfetch = nullptr;
+	
+	io_methods_initialized = true;
+}
 
 //===--------------------------------------------------------------------===//
 // DuckDBCachedFile Implementation
@@ -130,13 +150,22 @@ bool SQLiteDuckDBCacheVFS::CanHandlePath(ClientContext &context, const string &p
 	return FileSystem::IsRemoteFile(path);
 }
 
+// Static VFS structure must be at file scope for Windows DLL compatibility.
+// This ensures proper initialization across DLL boundaries.
+static sqlite3_vfs duckdb_vfs = {};
+static bool vfs_initialized = false;
+
 void SQLiteDuckDBCacheVFS::Register(ClientContext &context) {
+	// Initialize IO methods structure on first use
+	InitializeIOMethods();
+	
+	// Store context for this thread's VFS operations
+	current_vfs_context = &context;
+	
 	// SQLite VFS registration is global, so we only need to register once.
 	// Multiple calls just update the thread-local context.
 	sqlite3_vfs *existing_vfs = sqlite3_vfs_find(GetVFSName());
 	if (existing_vfs) {
-		// Update thread-local context for this thread's operations
-		current_vfs_context = &context;
 		return;
 	}
 
@@ -146,40 +175,40 @@ void SQLiteDuckDBCacheVFS::Register(ClientContext &context) {
 		throw InternalException("Failed to find default SQLite VFS");
 	}
 
-	// Static VFS structure persists for the lifetime of the process.
-	// This is required because SQLite doesn't copy the VFS structure.
-	static sqlite3_vfs duckdb_vfs = {};
-	
-	duckdb_vfs.iVersion = 1;
-	duckdb_vfs.szOsFile = sizeof(SQLiteDuckDBCachedFile);
-	duckdb_vfs.mxPathname = default_vfs->mxPathname;
-	duckdb_vfs.zName = GetVFSName();
-	// We use thread-local storage instead of pAppData to avoid lifetime issues.
-	// The ClientContext might be destroyed before the VFS is unregistered.
-	duckdb_vfs.pAppData = nullptr;
+	// Initialize the VFS structure only once
+	if (!vfs_initialized) {
+		memset(&duckdb_vfs, 0, sizeof(duckdb_vfs));
+		
+		duckdb_vfs.iVersion = 1;
+		duckdb_vfs.szOsFile = sizeof(SQLiteDuckDBCachedFile);
+		duckdb_vfs.mxPathname = default_vfs->mxPathname;
+		duckdb_vfs.zName = GetVFSName();
+		// We use thread-local storage instead of pAppData to avoid lifetime issues.
+		// The ClientContext might be destroyed before the VFS is unregistered.
+		duckdb_vfs.pAppData = nullptr;
 
-	// Configure VFS methods - most delegate to our implementations
-	duckdb_vfs.xOpen = Open;
-	duckdb_vfs.xDelete = Delete;
-	duckdb_vfs.xAccess = Access;
-	duckdb_vfs.xFullPathname = FullPathname;
-	duckdb_vfs.xDlOpen = DlOpen;
-	duckdb_vfs.xDlError = DlError;
-	duckdb_vfs.xDlSym = DlSym;
-	duckdb_vfs.xDlClose = DlClose;
-	duckdb_vfs.xRandomness = Randomness;
-	duckdb_vfs.xSleep = Sleep;
-	duckdb_vfs.xCurrentTime = CurrentTime;
-	duckdb_vfs.xGetLastError = GetLastError;
+		// Configure VFS methods - most delegate to our implementations
+		duckdb_vfs.xOpen = Open;
+		duckdb_vfs.xDelete = Delete;
+		duckdb_vfs.xAccess = Access;
+		duckdb_vfs.xFullPathname = FullPathname;
+		duckdb_vfs.xDlOpen = DlOpen;
+		duckdb_vfs.xDlError = DlError;
+		duckdb_vfs.xDlSym = DlSym;
+		duckdb_vfs.xDlClose = DlClose;
+		duckdb_vfs.xRandomness = Randomness;
+		duckdb_vfs.xSleep = Sleep;
+		duckdb_vfs.xCurrentTime = CurrentTime;
+		duckdb_vfs.xGetLastError = GetLastError;
+		
+		vfs_initialized = true;
+	}
 
 	// Register our VFS with SQLite (non-default)
 	int rc = sqlite3_vfs_register(&duckdb_vfs, 0);
 	if (rc != SQLITE_OK) {
 		throw InternalException("Failed to register DuckDB Cache VFS: %s", sqlite3_errstr(rc));
 	}
-	
-	// Store context for this thread's VFS operations
-	current_vfs_context = &context;
 }
 
 //===--------------------------------------------------------------------===//
@@ -212,6 +241,20 @@ int SQLiteDuckDBCacheVFS::Open(sqlite3_vfs *vfs, const char *filename, sqlite3_f
 		// Retrieve the context for this thread
 		ClientContext *context = current_vfs_context;
 		if (!context) {
+			// On Windows, thread-local storage might not be initialized in callbacks
+			// This is a safety check - the context should always be set by Register()
+			return SQLITE_CANTOPEN;
+		}
+		
+		// Validate the context pointer is accessible
+		try {
+			// Perform a simple operation to verify the context is valid
+			auto &db = context->db;
+			if (!db) {
+				return SQLITE_CANTOPEN;
+			}
+		} catch (...) {
+			// Context pointer is invalid
 			return SQLITE_CANTOPEN;
 		}
 
@@ -224,6 +267,8 @@ int SQLiteDuckDBCacheVFS::Open(sqlite3_vfs *vfs, const char *filename, sqlite3_f
 		try {
 			duckdb_file->duckdb_file = make_uniq<DuckDBCachedFile>(*context, filename);
 		} catch (...) {
+			// Clean up on failure
+			memset(duckdb_file, 0, sizeof(SQLiteDuckDBCachedFile));
 			return SQLITE_CANTOPEN;
 		}
 		
@@ -232,6 +277,9 @@ int SQLiteDuckDBCacheVFS::Open(sqlite3_vfs *vfs, const char *filename, sqlite3_f
 		try {
 			ValidateSQLiteHeader(*duckdb_file->duckdb_file);
 		} catch (const Exception &e) {
+			// Clean up on failure
+			duckdb_file->duckdb_file.reset();
+			memset(duckdb_file, 0, sizeof(SQLiteDuckDBCachedFile));
 			return SQLITE_CANTOPEN;
 		}
 
@@ -258,15 +306,28 @@ int SQLiteDuckDBCacheVFS::Access(sqlite3_vfs *vfs, const char *filename, int fla
 		return SQLITE_IOERR;
 	}
 
+	// Initialize result to safe default
+	*result = 0;
+
 	if (flags == SQLITE_ACCESS_EXISTS) {
 		try {
 			// Use DuckDB's filesystem to check file existence
 			ClientContext *context = current_vfs_context;
 			
 			if (context) {
-				auto &fs = context->db->GetFileSystem();
-				*result = fs.FileExists(filename) ? 1 : 0;
+				// Validate context is accessible
+				try {
+					auto &db = context->db;
+					if (db) {
+						auto &fs = db->GetFileSystem();
+						*result = fs.FileExists(filename) ? 1 : 0;
+					}
+				} catch (...) {
+					// Context is invalid - file doesn't exist from our perspective
+					*result = 0;
+				}
 			} else {
+				// No context - file doesn't exist from our perspective
 				*result = 0;
 			}
 		} catch (...) {
