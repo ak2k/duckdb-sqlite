@@ -106,16 +106,28 @@ int DuckDBCachedFile::Read(void *buffer, int amount, sqlite3_int64 offset) {
 	}
 
 	try {
-		// DuckDB's CachingFileSystem returns a pointer to its internal buffer.
-		// This avoids unnecessary copies for cached data.
+		// Read-ahead optimization: SQLite typically reads in 4KB pages, but
+		// DuckDB's CachingFileSystem works better with larger blocks.
+		// We'll read at least 1MB to populate the cache.
+		static constexpr int64_t MIN_READ_SIZE = 1024 * 1024; // 1MB
+		
+		// Calculate the read-ahead size
+		int64_t read_ahead_size = std::max(static_cast<int64_t>(amount), MIN_READ_SIZE);
+		
+		// Make sure we don't read past the end of the file
+		int64_t remaining = cached_file_size - offset;
+		read_ahead_size = std::min(read_ahead_size, remaining);
+		
+		// Read the larger block to populate DuckDB's cache
 		data_ptr_t read_buffer = nullptr;
-		auto buffer_handle = caching_handle->Read(read_buffer, amount, offset);
+		auto buffer_handle = caching_handle->Read(read_buffer, read_ahead_size, offset);
 		
 		// Safety check - CachingFileSystem should always return a valid buffer
 		if (!read_buffer) {
 			return SQLITE_IOERR_READ;
 		}
 		
+		// Copy only the requested amount to the output buffer
 		memcpy(buffer, read_buffer, amount);
 		return SQLITE_OK;
 	} catch (...) {
