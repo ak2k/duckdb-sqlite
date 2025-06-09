@@ -35,12 +35,51 @@ jobs:
           cd ..
           make debug
       
+      - name: Find and list debug build artifacts
+        shell: bash
+        run: |
+          echo "=== Searching for unittest executable ==="
+          find . -name "unittest*" -type f 2>/dev/null || echo "No unittest found with find"
+          echo "=== Checking duckdb build directory ==="
+          ls -la duckdb/build/ 2>/dev/null || echo "No duckdb/build directory"
+          echo "=== Checking for Windows-style paths ==="
+          ls -la duckdb/build/debug/ 2>/dev/null || echo "No duckdb/build/debug directory"
+          ls -la build/ 2>/dev/null || echo "No local build directory"
+          ls -la build/debug/ 2>/dev/null || echo "No local build/debug directory"
+      
       - name: Test with debug symbols and verbose output
         shell: bash
         continue-on-error: true
         run: |
-          cd duckdb
-          ./build/debug/test/unittest "*http_sqlite*" --durations yes --verbosity high
+          echo "=== Attempting to find and run unittest ==="
+          # Try different possible locations for the unittest executable (Windows has Debug subdirectory)
+          if [ -f "build/debug/test/Debug/unittest.exe" ]; then
+            echo "Found unittest.exe in build/debug/test/Debug/ (Windows Visual Studio path)"
+            ./build/debug/test/Debug/unittest.exe "*http_sqlite*" --durations yes --verbosity high
+          elif [ -f "duckdb/build/debug/test/Debug/unittest.exe" ]; then
+            echo "Found unittest.exe in duckdb/build/debug/test/Debug/"
+            cd duckdb
+            ./build/debug/test/Debug/unittest.exe "*http_sqlite*" --durations yes --verbosity high
+          elif [ -f "duckdb/build/debug/test/unittest.exe" ]; then
+            echo "Found unittest.exe in duckdb/build/debug/test/"
+            cd duckdb
+            ./build/debug/test/unittest.exe "*http_sqlite*" --durations yes --verbosity high
+          elif [ -f "duckdb/build/debug/test/unittest" ]; then
+            echo "Found unittest in duckdb/build/debug/test/"
+            cd duckdb
+            ./build/debug/test/unittest "*http_sqlite*" --durations yes --verbosity high
+          elif [ -f "build/debug/test/unittest.exe" ]; then
+            echo "Found unittest.exe in build/debug/test/"
+            ./build/debug/test/unittest.exe "*http_sqlite*" --durations yes --verbosity high
+          elif [ -f "build/debug/test/unittest" ]; then
+            echo "Found unittest in build/debug/test/"
+            ./build/debug/test/unittest "*http_sqlite*" --durations yes --verbosity high
+          else
+            echo "ERROR: Could not find unittest executable in any expected location"
+            echo "=== Directory structure debug ==="
+            find . -name "*unittest*" -type f 2>/dev/null || echo "No unittest files found anywhere"
+            exit 1
+          fi
           
   duckdb-stable-build:
     name: Build extension binaries
