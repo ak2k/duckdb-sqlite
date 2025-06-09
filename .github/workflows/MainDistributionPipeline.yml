@@ -100,12 +100,20 @@ jobs:
           echo "=== Running http_sqlite tests in debug mode ==="
           # Windows builds place the executable in a Debug subdirectory
           if [ -f "build/debug/test/Debug/unittest.exe" ]; then
-            ./build/debug/test/Debug/unittest.exe "*http_sqlite*" --durations yes --verbosity high
+            echo "Found unittest at: build/debug/test/Debug/unittest.exe"
+            echo "Running: ./build/debug/test/Debug/unittest.exe \"*http_sqlite*\""
+            ./build/debug/test/Debug/unittest.exe "*http_sqlite*"
           elif [ -f "build/debug/test/unittest.exe" ]; then
-            ./build/debug/test/unittest.exe "*http_sqlite*" --durations yes --verbosity high
+            echo "Found unittest at: build/debug/test/unittest.exe"
+            echo "Running: ./build/debug/test/unittest.exe \"*http_sqlite*\""
+            ./build/debug/test/unittest.exe "*http_sqlite*"
           else
             echo "ERROR: Could not find unittest executable"
+            echo "Searching for unittest files:"
             find build/debug -name "unittest*" -type f
+            echo "Directory structure:"
+            ls -la build/debug/test/ || echo "test directory not found"
+            ls -la build/debug/test/Debug/ || echo "Debug directory not found"
             exit 1
           fi
           
