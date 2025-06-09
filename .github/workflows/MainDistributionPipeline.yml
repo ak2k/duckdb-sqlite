@@ -27,78 +27,33 @@ jobs:
         with:
           vcpkgGitCommitId: 5e5d0e1cd7785623065e77eff011afdeec1a3574
       
-      - name: Build extension in debug mode
+      - name: Build extension in debug mode with Ninja
         shell: bash
         run: |
-          cd duckdb
-          make debug
-          cd ..
-          make debug
+          make GEN=ninja debug
       
-      - name: Find and list debug build artifacts
+      - name: Setup test database
         shell: bash
         run: |
-          echo "=== Searching for unittest executable ==="
-          find . -name "unittest*" -type f 2>/dev/null || echo "No unittest found with find"
-          echo "=== Checking duckdb build directory ==="
-          ls -la duckdb/build/ 2>/dev/null || echo "No duckdb/build directory"
-          echo "=== Checking for Windows-style paths ==="
-          ls -la duckdb/build/debug/ 2>/dev/null || echo "No duckdb/build/debug directory"
-          ls -la build/ 2>/dev/null || echo "No local build directory"
-          ls -la build/debug/ 2>/dev/null || echo "No local build/debug directory"
+          choco install sqlite -y
+          ./build/debug/duckdb < data/sql/tpch-export.duckdb
+          sqlite3 data/db/tpch.db < data/sql/tpch-create.sqlite
       
-      - name: Test with debug symbols and verbose output
+      - name: Test specific http_sqlite tests with debug symbols
         shell: bash
         continue-on-error: true
+        env:
+          SQLITE_TPCH_GENERATED: 1
         run: |
-          echo "=== Attempting to find and run unittest ==="
-          # Try different possible locations for the unittest executable (Windows has Debug subdirectory)
+          echo "=== Running http_sqlite tests in debug mode ==="
+          # Windows builds place the executable in a Debug subdirectory
           if [ -f "build/debug/test/Debug/unittest.exe" ]; then
-            echo "Found unittest.exe in build/debug/test/Debug/ (Windows Visual Studio path)"
-            echo "Testing http_sqlite..."
-            # First just try to run the test to see if we get SIGSEGV
-            if ./build/debug/test/Debug/unittest.exe "*http_sqlite*"; then
-              echo "http_sqlite tests passed!"
-            else
-              EXIT_CODE=$?
-              echo "Test failed with exit code $EXIT_CODE"
-              if [ $EXIT_CODE -eq 255 ]; then
-                echo "Pattern matching might not be working, running ALL tests to find SIGSEGV..."
-                ./build/debug/test/Debug/unittest.exe || echo "All tests failed with exit code $?"
-              fi
-            fi
-          elif [ -f "duckdb/build/debug/test/Debug/unittest.exe" ]; then
-            echo "Found unittest.exe in duckdb/build/debug/test/Debug/"
-            cd duckdb
-            echo "Testing http_sqlite..."
-            if ./build/debug/test/Debug/unittest.exe "*http_sqlite*"; then
-              echo "http_sqlite tests passed!"
-            else
-              EXIT_CODE=$?
-              echo "Test failed with exit code $EXIT_CODE"
-              if [ $EXIT_CODE -eq 255 ]; then
-                echo "Pattern matching might not be working, running ALL tests to find SIGSEGV..."
-                ./build/debug/test/Debug/unittest.exe || echo "All tests failed with exit code $?"
-              fi
-            fi
-          elif [ -f "duckdb/build/debug/test/unittest.exe" ]; then
-            echo "Found unittest.exe in duckdb/build/debug/test/"
-            cd duckdb
-            ./build/debug/test/unittest.exe "*http_sqlite*" --durations yes --verbosity high
-          elif [ -f "duckdb/build/debug/test/unittest" ]; then
-            echo "Found unittest in duckdb/build/debug/test/"
-            cd duckdb
-            ./build/debug/test/unittest "*http_sqlite*" --durations yes --verbosity high
+            ./build/debug/test/Debug/unittest.exe "*http_sqlite*" --durations yes --verbosity high
           elif [ -f "build/debug/test/unittest.exe" ]; then
-            echo "Found unittest.exe in build/debug/test/"
             ./build/debug/test/unittest.exe "*http_sqlite*" --durations yes --verbosity high
-          elif [ -f "build/debug/test/unittest" ]; then
-            echo "Found unittest in build/debug/test/"
-            ./build/debug/test/unittest "*http_sqlite*" --durations yes --verbosity high
           else
-            echo "ERROR: Could not find unittest executable in any expected location"
-            echo "=== Directory structure debug ==="
-            find . -name "*unittest*" -type f 2>/dev/null || echo "No unittest files found anywhere"
+            echo "ERROR: Could not find unittest executable"
+            find build/debug -name "unittest*" -type f
             exit 1
           fi
           
