@@ -72,10 +72,12 @@ public:
 
 	// SQLite VFS interface methods (must be public for C callback registration)
 	// Note: SQLite expects these to use the C calling convention
-#ifdef _WIN32
-	#define SQLITE_CALLBACK __cdecl
-#else
-	#define SQLITE_CALLBACK
+#ifndef SQLITE_CALLBACK
+	#ifdef _WIN32
+		#define SQLITE_CALLBACK __cdecl
+	#else
+		#define SQLITE_CALLBACK
+	#endif
 #endif
 	
 	static int SQLITE_CALLBACK Open(sqlite3_vfs *vfs, const char *filename, sqlite3_file *file, int flags, int *out_flags);
@@ -113,15 +115,17 @@ private:
 // Memory layout must be compatible with SQLite's expectations.
 #ifdef _WIN32
 #pragma pack(push, 8)
-#endif
 struct SQLiteDuckDBCachedFile {
 	sqlite3_file base;  // Must be first member for C compatibility
 	unique_ptr<DuckDBCachedFile> duckdb_file;  // The actual file implementation
 	ClientContext *context;  // DuckDB context for this file
-#ifdef _WIN32
-} __declspec(align(8));
+};
 #pragma pack(pop)
 #else
+struct SQLiteDuckDBCachedFile {
+	sqlite3_file base;  // Must be first member for C compatibility
+	unique_ptr<DuckDBCachedFile> duckdb_file;  // The actual file implementation
+	ClientContext *context;  // DuckDB context for this file
 };
 #endif
 
