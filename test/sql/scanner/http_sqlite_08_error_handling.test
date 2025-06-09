@@ -17,4 +17,4 @@ LOAD httpfs;
 statement error
 SELECT * FROM sqlite_scan('https://example.com/non-existent-database.db', 'test');
 ----
-open database
+Error
