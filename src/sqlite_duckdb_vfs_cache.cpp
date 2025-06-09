@@ -235,12 +235,8 @@ int SQLiteDuckDBCacheVFS::Open(sqlite3_vfs *vfs, const char *filename, sqlite3_f
 		try {
 			duckdb_file->duckdb_file = make_uniq<DuckDBCachedFile>(*context, filename);
 		} catch (const std::exception &e) {
-			// Clean up the file structure on failure
-			memset(duckdb_file, 0, sizeof(SQLiteDuckDBCachedFile));
 			return SQLITE_CANTOPEN;
 		} catch (...) {
-			// Clean up for non-standard exceptions too
-			memset(duckdb_file, 0, sizeof(SQLiteDuckDBCachedFile));
 			return SQLITE_CANTOPEN;
 		}
 		
