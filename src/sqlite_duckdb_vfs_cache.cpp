@@ -7,6 +7,10 @@
 #include "duckdb/storage/buffer_manager.hpp"
 #include <cstring>
 
+#ifdef _WIN32
+#include <windows.h>
+#endif
+
 namespace duckdb {
 
 // Storage for the current ClientContext pointer.
@@ -27,6 +31,21 @@ static ClientContext* global_vfs_context = nullptr;
 static std::mutex global_vfs_context_mutex;
 #else
 thread_local ClientContext* current_vfs_context = nullptr;
+#endif
+
+#ifdef _WIN32
+#ifdef DEBUG
+// Test if mutex operations trigger the assertion
+static void TestMutexOperation() {
+	fprintf(stderr, "[SQLITE_VFS_DEBUG] Testing mutex lock operation\n");
+	try {
+		std::lock_guard<std::mutex> lock(global_vfs_context_mutex);
+		fprintf(stderr, "[SQLITE_VFS_DEBUG] Mutex locked successfully\n");
+	} catch (...) {
+		fprintf(stderr, "[SQLITE_VFS_DEBUG] Exception during mutex lock!\n");
+	}
+}
+#endif
 #endif
 
 // SQLite page size constant for sector size calculations
@@ -74,6 +93,12 @@ static void InitializeIOMethods() {
 
 DuckDBCachedFile::DuckDBCachedFile(ClientContext &context, const string &path) 
     : context(context), path(path), cached_file_size(-1), initialized(false) {
+#ifdef _WIN32
+#ifdef DEBUG
+	fprintf(stderr, "[SQLITE_VFS_DEBUG] DuckDBCachedFile constructor called\n");
+	fprintf(stderr, "[SQLITE_VFS_DEBUG] Path: %s\n", path.c_str());
+#endif
+#endif
 	// Defer actual file opening until first use to avoid doing DuckDB operations
 	// during SQLite VFS callbacks, which might be in a different serialization context
 }
@@ -84,6 +109,13 @@ void DuckDBCachedFile::EnsureInitialized() {
 	if (initialized) {
 		return;
 	}
+	
+#ifdef _WIN32
+#ifdef DEBUG
+	fprintf(stderr, "[SQLITE_VFS_DEBUG] EnsureInitialized() called\n");
+	fprintf(stderr, "[SQLITE_VFS_DEBUG] Thread ID: %lu\n", (unsigned long)GetCurrentThreadId());
+#endif
+#endif
 	
 	// Configure file flags for optimal caching behavior.
 	// Remote files use DIRECT_IO to bypass OS caching since DuckDB's
@@ -202,6 +234,14 @@ static sqlite3_vfs duckdb_vfs = {};
 static bool vfs_initialized = false;
 
 void SQLiteDuckDBCacheVFS::Register(ClientContext &context) {
+#ifdef _WIN32
+#ifdef DEBUG
+	fprintf(stderr, "[SQLITE_VFS_DEBUG] Register() called\n");
+	fprintf(stderr, "[SQLITE_VFS_DEBUG] Context pointer: %p\n", (void*)&context);
+	fprintf(stderr, "[SQLITE_VFS_DEBUG] Thread ID: %lu\n", (unsigned long)GetCurrentThreadId());
+#endif
+#endif
+
 	// Initialize IO methods structure on first use
 	InitializeIOMethods();
 	
@@ -209,6 +249,9 @@ void SQLiteDuckDBCacheVFS::Register(ClientContext &context) {
 #ifdef _WIN32
 	// On Windows, avoid mutex operations which might trigger assertions
 	global_vfs_context = &context;
+#ifdef DEBUG
+	fprintf(stderr, "[SQLITE_VFS_DEBUG] Stored global context: %p\n", (void*)global_vfs_context);
+#endif
 #else
 	current_vfs_context = &context;
 #endif
@@ -276,6 +319,13 @@ void SQLiteDuckDBCacheVFS::Register(ClientContext &context) {
 	return SQLITE_OK;
 
 int SQLiteDuckDBCacheVFS::Open(sqlite3_vfs *vfs, const char *filename, sqlite3_file *file, int flags, int *out_flags) {
+#ifdef _WIN32
+#ifdef DEBUG
+	fprintf(stderr, "[SQLITE_VFS_DEBUG] Open() called for: %s\n", filename);
+	fprintf(stderr, "[SQLITE_VFS_DEBUG] Thread ID: %lu\n", (unsigned long)GetCurrentThreadId());
+#endif
+#endif
+
 	// Validate parameters and ensure read-only access
 	if (!vfs || !filename || !file || (flags & SQLITE_OPEN_READONLY) == 0) {
 		return SQLITE_CANTOPEN;
@@ -289,6 +339,12 @@ int SQLiteDuckDBCacheVFS::Open(sqlite3_vfs *vfs, const char *filename, sqlite3_f
 		
 		auto *duckdb_file = reinterpret_cast<SQLiteDuckDBCachedFile*>(file);
 		
+#ifdef _WIN32
+#ifdef DEBUG
+		fprintf(stderr, "[SQLITE_VFS_DEBUG] Before context retrieval\n");
+#endif
+#endif
+		
 		// Try to retrieve the context without triggering assertions
 		ClientContext *context = nullptr;
 #ifdef _WIN32
@@ -296,6 +352,9 @@ int SQLiteDuckDBCacheVFS::Open(sqlite3_vfs *vfs, const char *filename, sqlite3_f
 		// Just read the pointer directly - this is not thread-safe but might
 		// avoid the binary_deserializer assertion
 		context = global_vfs_context;
+#ifdef DEBUG
+		fprintf(stderr, "[SQLITE_VFS_DEBUG] Context pointer: %p\n", (void*)context);
+#endif
 #else
 		context = current_vfs_context;
 #endif
@@ -309,10 +368,21 @@ int SQLiteDuckDBCacheVFS::Open(sqlite3_vfs *vfs, const char *filename, sqlite3_f
 		duckdb_file->base.pMethods = &duckdb_cache_io_methods;
 		duckdb_file->context = context;
 		
+#ifdef _WIN32
+#ifdef DEBUG
+		fprintf(stderr, "[SQLITE_VFS_DEBUG] Before creating DuckDBCachedFile\n");
+#endif
+#endif
+		
 		// Create the DuckDB file handle with proper exception handling
 		try {
 			duckdb_file->duckdb_file = make_uniq<DuckDBCachedFile>(*context, filename);
 		} catch (...) {
+#ifdef _WIN32
+#ifdef DEBUG
+			fprintf(stderr, "[SQLITE_VFS_DEBUG] Exception in DuckDBCachedFile constructor\n");
+#endif
+#endif
 			// Clean up on failure
 			memset(duckdb_file, 0, sizeof(SQLiteDuckDBCachedFile));
 			return SQLITE_CANTOPEN;

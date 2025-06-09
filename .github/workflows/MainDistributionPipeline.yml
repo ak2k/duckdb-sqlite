@@ -163,11 +163,29 @@ jobs:
           echo "=== Setting up Windows debugging environment ==="
           # Try to enable crash dumps (may fail without admin rights)
           echo "Attempting to configure Windows Error Reporting..."
-          # Use cmd.exe to run reg commands since we're in bash
-          cmd.exe /c 'reg add "HKLM\SOFTWARE\Microsoft\Windows\Windows Error Reporting\LocalDumps" /f' 2>/dev/null || echo "Note: Could not modify registry (non-admin)"
           
-          # Create crash dump directory
-          mkdir -p "$TEMP/CrashDumps" || true
+          # Create crash dump directory first
+          export CRASH_DUMP_DIR="$GITHUB_WORKSPACE/crash_dumps"
+          mkdir -p "$CRASH_DUMP_DIR"
+          echo "Crash dump directory: $CRASH_DUMP_DIR"
+          
+          # Try multiple methods to enable crash dumps
+          # Method 1: Registry (requires admin)
+          cmd.exe /c 'reg add "HKLM\SOFTWARE\Microsoft\Windows\Windows Error Reporting\LocalDumps" /f' 2>/dev/null || echo "Note: Could not modify HKLM (non-admin)"
+          cmd.exe /c "reg add \"HKLM\\SOFTWARE\\Microsoft\\Windows\\Windows Error Reporting\\LocalDumps\" /v DumpFolder /t REG_EXPAND_SZ /d \"$CRASH_DUMP_DIR\" /f" 2>/dev/null || true
+          cmd.exe /c 'reg add "HKLM\SOFTWARE\Microsoft\Windows\Windows Error Reporting\LocalDumps" /v DumpType /t REG_DWORD /d 2 /f' 2>/dev/null || true
+          
+          # Method 2: Environment variables for .NET/CRT debugging
+          export COMPlus_DbgEnableMiniDump=1
+          export COMPlus_DbgMiniDumpType=4
+          export COMPlus_CreateDumpDiagnostics=1
+          
+          # Method 3: Windows Error Reporting environment
+          export WINDOWS_ERROR_REPORTING_DONT_SHOW_UI=1
+          
+          # Method 4: CRT debug heap and assertions
+          export _CRTDBG_MAP_ALLOC=1
+          export CRT_ASSERT_MODE=2
           
           # Install debugging tools if available
           echo "Checking for debugging tools..."
@@ -247,11 +265,23 @@ jobs:
             if [ "${EXIT_CODE:-0}" -ne 0 ]; then
               echo "Tests failed with exit code: ${EXIT_CODE}"
               
-              # Check for crash dumps
+              # Check for crash dumps in multiple locations
+              echo "Checking for crash dumps..."
+              if [ -d "$CRASH_DUMP_DIR" ]; then
+                echo "Checking CRASH_DUMP_DIR: $CRASH_DUMP_DIR"
+                ls -la "$CRASH_DUMP_DIR/" || true
+              fi
               if [ -d "$TEMP/CrashDumps" ]; then
-                echo "Checking for crash dumps..."
+                echo "Checking TEMP/CrashDumps..."
                 ls -la "$TEMP/CrashDumps/" || true
               fi
+              if [ -d "$LOCALAPPDATA/CrashDumps" ]; then
+                echo "Checking LocalAppData crash dumps..."
+                ls -la "$LOCALAPPDATA/CrashDumps/" || true
+              fi
+              # Look for .dmp files in current directory
+              echo "Looking for .dmp files in workspace..."
+              find . -name "*.dmp" 2>/dev/null | head -10 || true
               
               # Run individual tests to isolate the failure
               echo "=========================================="
@@ -300,24 +330,61 @@ jobs:
               echo "=========================================="
               grep -i "binary_deserializer\|has_buffered_field\|deserializ" test_output.log || true
               
-              # Upload any crash dumps as artifacts
-              if [ -d "$TEMP/CrashDumps" ] && [ "$(ls -A $TEMP/CrashDumps)" ]; then
-                echo "Crash dumps found, preparing for upload..."
-                zip -r crash_dumps.zip "$TEMP/CrashDumps"
+              # Collect all crash dumps for upload
+              echo "Collecting crash dumps for upload..."
+              DUMPS_FOUND=0
+              
+              # Create a directory for all dumps
+              mkdir -p collected_dumps
+              
+              # Collect from various locations
+              if [ -d "$CRASH_DUMP_DIR" ] && [ "$(ls -A $CRASH_DUMP_DIR 2>/dev/null)" ]; then
+                echo "Found dumps in CRASH_DUMP_DIR"
+                cp -r "$CRASH_DUMP_DIR"/* collected_dumps/ || true
+                DUMPS_FOUND=1
+              fi
+              
+              if [ -d "$TEMP/CrashDumps" ] && [ "$(ls -A $TEMP/CrashDumps 2>/dev/null)" ]; then
+                echo "Found dumps in TEMP/CrashDumps"
+                cp -r "$TEMP/CrashDumps"/* collected_dumps/ || true
+                DUMPS_FOUND=1
+              fi
+              
+              if [ -d "$LOCALAPPDATA/CrashDumps" ] && [ "$(ls -A $LOCALAPPDATA/CrashDumps 2>/dev/null)" ]; then
+                echo "Found dumps in LocalAppData"
+                cp -r "$LOCALAPPDATA/CrashDumps"/* collected_dumps/ || true
+                DUMPS_FOUND=1
+              fi
+              
+              # Look for any .dmp files
+              find . -name "*.dmp" -exec cp {} collected_dumps/ \; 2>/dev/null || true
+              
+              if [ $DUMPS_FOUND -eq 1 ] || [ "$(ls -A collected_dumps 2>/dev/null)" ]; then
+                echo "Creating crash dumps archive..."
+                zip -r crash_dumps.zip collected_dumps/
+                echo "Crash dumps archive created: crash_dumps.zip"
+                ls -la crash_dumps.zip
+              else
+                echo "No crash dumps found"
               fi
             fi
           fi
           
-      - name: Upload crash dumps
+      - name: Upload crash dumps and debug logs
         if: failure()
         uses: actions/upload-artifact@v4
         with:
           name: windows-debug-crash-dumps
           path: |
             crash_dumps.zip
+            collected_dumps/
             test_output.log
+            minimal_test.log
+            bypass_test.log
             http_sqlite_*.test.log
+            *.dmp
           retention-days: 7
+          if-no-files-found: warn
           
   duckdb-stable-build:
     name: Build extension binaries
