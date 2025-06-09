@@ -1,0 +1,20 @@
+# name: test/sql/scanner/http_sqlite_02_concurrent_scans.test
+# description: Multiple concurrent scans of remote SQLite database
+# group: [sqlite_scanner]
+
+require sqlite_scanner
+
+statement ok
+INSTALL httpfs;
+
+statement ok
+LOAD httpfs;
+
+# Test 3: Multiple concurrent scans
+query III
+SELECT 
+    (SELECT COUNT(*) FROM sqlite_scan('https://github.com/lerocha/chinook-database/raw/master/ChinookDatabase/DataSources/Chinook_Sqlite.sqlite', 'Artist')) as artists,
+    (SELECT COUNT(*) FROM sqlite_scan('https://github.com/lerocha/chinook-database/raw/master/ChinookDatabase/DataSources/Chinook_Sqlite.sqlite', 'Album')) as albums,
+    (SELECT COUNT(*) FROM sqlite_scan('https://github.com/lerocha/chinook-database/raw/master/ChinookDatabase/DataSources/Chinook_Sqlite.sqlite', 'Track')) as tracks;
+----
+275	347	3503

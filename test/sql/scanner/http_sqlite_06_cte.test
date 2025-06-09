@@ -1,0 +1,27 @@
+# name: test/sql/scanner/http_sqlite_06_cte.test
+# description: CTE with remote SQLite tables
+# group: [sqlite_scanner]
+
+require sqlite_scanner
+
+statement ok
+INSTALL httpfs;
+
+statement ok
+LOAD httpfs;
+
+# Test 9: CTE with remote tables
+query TI
+WITH top_genres AS (
+    SELECT g.GenreId, g.Name, COUNT(*) as track_count
+    FROM sqlite_scan('https://github.com/lerocha/chinook-database/raw/master/ChinookDatabase/DataSources/Chinook_Sqlite.sqlite', 'Genre') g
+    JOIN sqlite_scan('https://github.com/lerocha/chinook-database/raw/master/ChinookDatabase/DataSources/Chinook_Sqlite.sqlite', 'Track') t ON g.GenreId = t.GenreId
+    GROUP BY g.GenreId, g.Name
+    ORDER BY track_count DESC
+    LIMIT 3
+)
+SELECT Name, track_count FROM top_genres ORDER BY Name;
+----
+Latin	579
+Metal	374
+Rock	1297
