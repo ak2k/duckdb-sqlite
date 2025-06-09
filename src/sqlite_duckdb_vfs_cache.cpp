@@ -11,6 +11,13 @@ namespace duckdb {
 // Thread-local storage for the current ClientContext pointer.
 // This allows VFS callbacks to access the DuckDB context without storing it in the VFS itself,
 // preventing use-after-free issues when contexts are destroyed.
+//
+// TODO: Windows SIGSEGV investigation - determine which fixes are necessary:
+// 1. __declspec(thread) vs thread_local - may be unnecessary if DLL boundary isn't the issue
+// 2. Runtime initialization of static structures - may be unnecessary if static init works
+// 3. Extra context validation in Open/Access - keep for safety but may not fix SIGSEGV
+// 4. File scope statics - may be unnecessary if the issue is elsewhere
+// Once the root cause is identified, revert unnecessary Windows-specific code.
 #ifdef _WIN32
 // On Windows, thread-local storage in DLLs can be problematic, especially when
 // callbacks cross DLL boundaries. We use __declspec(thread) for better compatibility.
