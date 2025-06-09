@@ -204,6 +204,18 @@ jobs:
             tail -n 20 minimal_test.log || true
           fi
           
+          # Test without VFS to see if it's HTTP or our code
+          echo "=========================================="
+          echo "Testing HTTP without our VFS..."
+          echo "=========================================="
+          
+          if $UNITTEST_EXE "test/sql/scanner/http_sqlite_debug_bypass_vfs.test" 2>&1 | tee bypass_test.log; then
+            echo "✓ HTTP works without our VFS - issue is in our SQLite integration"
+          else
+            echo "✗ HTTP fails even without our VFS - issue might be in DuckDB's HTTP handling"
+            tail -n 20 bypass_test.log || true
+          fi
+          
           # Then try to run all http_sqlite tests with debugging
           echo "=========================================="
           echo "Running all http_sqlite tests together..."
