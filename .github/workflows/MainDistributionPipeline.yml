@@ -12,6 +12,36 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Temporary debug job for Windows SIGSEGV investigation
+  windows-debug-test:
+    name: Windows Debug Build for SIGSEGV Investigation
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: 'true'
+      
+      - name: Setup vcpkg
+        uses: lukka/run-vcpkg@v11.5
+        with:
+          vcpkgGitCommitId: 5e5d0e1cd7785623065e77eff011afdeec1a3574
+      
+      - name: Build extension in debug mode
+        shell: bash
+        run: |
+          cd duckdb
+          make debug
+          cd ..
+          make debug
+      
+      - name: Test with debug symbols and verbose output
+        shell: bash
+        continue-on-error: true
+        run: |
+          cd duckdb
+          ./build/debug/test/unittest "*http_sqlite*" --durations yes --verbosity high
+          
   duckdb-stable-build:
     name: Build extension binaries
     uses: duckdb/extension-ci-tools/.github/workflows/_extension_distribution.yml@v1.3.0
