@@ -14,14 +14,53 @@
 
 namespace duckdb {
 
+//===--------------------------------------------------------------------===//
+// Thread Safety Documentation
+//===--------------------------------------------------------------------===//
+// This implementation provides the following thread safety guarantees:
+//
+// 1. VFS Registration/Unregistration (THREAD-SAFE)
+//    - Protected by vfs_registry_mutex
+//    - Safe to call from multiple threads simultaneously
+//    - Each ClientContext gets its own independent VFS instance
+//
+// 2. File Operations (THREAD-SAFE)
+//    - No shared mutable state between VFS instances
+//    - Each file handle contains its own context pointer
+//    - DuckDB's CachingFileSystem handles internal synchronization
+//
+// 3. Context Lifetime Requirements
+//    - ClientContext MUST outlive all SQLite connections using its VFS
+//    - Call Unregister() before destroying the ClientContext
+//    - Consider using SQLiteVFSRegistration RAII helper for automatic cleanup
+//
+// 4. What the Mutex Protects
+//    - vfs_registry map operations (insert/find/erase)
+//    - VFS name generation and lookup
+//    - Does NOT protect file I/O operations (not needed)
+//
+// 5. Cache Sharing
+//    - Multiple VFS instances share the same ExternalFileCache
+//    - Cache is managed at the DatabaseInstance level
+//    - Thread-safe through DuckDB's internal locking mechanisms
+//===--------------------------------------------------------------------===//
+
 // Dynamic VFS registration approach to eliminate thread-local storage issues.
 // Each ClientContext gets its own VFS instance with a unique name.
 // This avoids Windows SIGSEGV issues while maintaining cache sharing.
 struct DuckDBVFSWrapper {
 	sqlite3_vfs base;           // Must be first - SQLite VFS structure
 	ClientContext *context;     // The DuckDB context for this VFS
-	string vfs_name;           // Unique name for this VFS instance
+	char *vfs_name;            // Unique name for this VFS instance (C-style for DLL safety)
 	sqlite3_io_methods io_methods; // IO methods for this VFS instance
+	
+	~DuckDBVFSWrapper() {
+		// Clean up the C-style allocated name
+		if (vfs_name) {
+			sqlite3_free(vfs_name);
+			vfs_name = nullptr;
+		}
+	}
 };
 
 // Global registry of VFS wrappers to manage their lifetime
@@ -121,14 +160,14 @@ void DuckDBCachedFile::EnsureInitialized() {
 	auto buffer_handle = caching_handle->Read(read_buffer, SQLITE_HEADER_SIZE, 0);
 	
 	if (!read_buffer) {
-		throw InvalidInputException("Failed to read file header");
+		throw InvalidInputException("Failed to read SQLite header from '%s' - file may be inaccessible or empty", path);
 	}
 	
 	memcpy(header_buffer, read_buffer, SQLITE_HEADER_SIZE);
 	
 	// Ensure this is actually a SQLite database file
 	if (memcmp(header_buffer, SQLITE_HEADER, SQLITE_HEADER_SIZE) != 0) {
-		throw InvalidInputException("File is not a valid SQLite database");
+		throw InvalidInputException("File '%s' is not a valid SQLite database - header mismatch", path);
 	}
 	
 	initialized = true;
@@ -224,13 +263,20 @@ void SQLiteDuckDBCacheVFS::Register(ClientContext &context) {
 	// Find SQLite's default VFS to delegate some operations
 	sqlite3_vfs *default_vfs = sqlite3_vfs_find(nullptr);
 	if (!default_vfs) {
-		throw InternalException("Failed to find default SQLite VFS");
+		throw InternalException("Failed to find default SQLite VFS - SQLite may not be properly initialized");
 	}
 
 	// Create a new VFS wrapper for this context
 	auto wrapper = make_uniq<DuckDBVFSWrapper>();
 	wrapper->context = &context;
-	wrapper->vfs_name = GetUniqueVFSName(&context);
+	
+	// Allocate VFS name using SQLite's allocator for DLL safety
+	string temp_name = GetUniqueVFSName(&context);
+	wrapper->vfs_name = (char*)sqlite3_malloc64(temp_name.length() + 1);
+	if (!wrapper->vfs_name) {
+		throw InternalException("Failed to allocate memory for VFS name");
+	}
+	strcpy(wrapper->vfs_name, temp_name.c_str());
 	
 	// Initialize the IO methods for this VFS instance
 	InitializeIOMethods(wrapper->io_methods);
@@ -240,7 +286,7 @@ void SQLiteDuckDBCacheVFS::Register(ClientContext &context) {
 	wrapper->base.iVersion = 1;
 	wrapper->base.szOsFile = sizeof(SQLiteDuckDBCachedFile);
 	wrapper->base.mxPathname = default_vfs->mxPathname;
-	wrapper->base.zName = wrapper->vfs_name.c_str();
+	wrapper->base.zName = wrapper->vfs_name;  // Now using C-style string
 	wrapper->base.pAppData = wrapper.get();  // Store pointer to wrapper
 
 	// Configure VFS methods
@@ -268,7 +314,7 @@ void SQLiteDuckDBCacheVFS::Register(ClientContext &context) {
 	
 #ifdef _WIN32
 #ifdef DEBUG
-	fprintf(stderr, "[SQLITE_VFS_DEBUG] Registered VFS: %s\n", vfs_registry[&context]->vfs_name.c_str());
+	fprintf(stderr, "[SQLITE_VFS_DEBUG] Registered VFS: %s\n", vfs_registry[&context]->vfs_name);
 #endif
 #endif
 }
@@ -291,8 +337,8 @@ const char *SQLiteDuckDBCacheVFS::GetVFSNameForContext(ClientContext &context) {
 	std::lock_guard<std::mutex> lock(vfs_registry_mutex);
 	
 	auto it = vfs_registry.find(&context);
-	if (it != vfs_registry.end()) {
-		return it->second->vfs_name.c_str();
+	if (it != vfs_registry.end() && it->second->vfs_name) {
+		return it->second->vfs_name;  // Return the C-style string directly
 	}
 	
 	// Fallback to default name if not found (shouldn't happen)
