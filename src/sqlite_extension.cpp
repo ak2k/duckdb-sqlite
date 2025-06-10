@@ -24,48 +24,44 @@ static void SetSqliteDebugQueryPrint(ClientContext &context, SetScope scope, Val
 	SQLiteDB::DebugSetPrintQueries(BooleanValue::Get(parameter));
 }
 
-// Store function instances as pointers to ensure they're only created at runtime
-static unique_ptr<SqliteScanFunction> sqlite_scan_instance;
-static unique_ptr<SqliteAttachFunction> sqlite_attach_instance;
-static unique_ptr<SQLiteQueryFunction> sqlite_query_instance;
-
 static void LoadInternal(DatabaseInstance &db) {
 #ifdef _WIN32
 	fprintf(stderr, "[SQLITE_SCAN_DEBUG] LoadInternal called\n");
 	fflush(stderr);
 #endif
 
-	// Create function instances only at runtime, not during static initialization
-	if (!sqlite_scan_instance) {
+	// Create function instances inline like built-in functions do
+	// This avoids any static storage issues
+	{
 #ifdef _WIN32
-		fprintf(stderr, "[SQLITE_SCAN_DEBUG] Creating SqliteScanFunction instance\n");
+		fprintf(stderr, "[SQLITE_SCAN_DEBUG] Creating and registering SqliteScanFunction\n");
 		fflush(stderr);
 #endif
-		sqlite_scan_instance = make_uniq<SqliteScanFunction>();
-	}
-	ExtensionUtil::RegisterFunction(db, *sqlite_scan_instance);
+		SqliteScanFunction sqlite_scan;
+		ExtensionUtil::RegisterFunction(db, sqlite_scan);
 #ifdef _WIN32
-	fprintf(stderr, "[SQLITE_SCAN_DEBUG] sqlite_scan function registered\n");
-	fflush(stderr);
-#endif
-
-	if (!sqlite_attach_instance) {
-		sqlite_attach_instance = make_uniq<SqliteAttachFunction>();
-	}
-	ExtensionUtil::RegisterFunction(db, *sqlite_attach_instance);
-
-	if (!sqlite_query_instance) {
-#ifdef _WIN32
-		fprintf(stderr, "[SQLITE_SCAN_DEBUG] Creating SQLiteQueryFunction instance\n");
+		fprintf(stderr, "[SQLITE_SCAN_DEBUG] sqlite_scan function registered\n");
 		fflush(stderr);
 #endif
-		sqlite_query_instance = make_uniq<SQLiteQueryFunction>();
 	}
-	ExtensionUtil::RegisterFunction(db, *sqlite_query_instance);
+
+	{
+		SqliteAttachFunction sqlite_attach;
+		ExtensionUtil::RegisterFunction(db, sqlite_attach);
+	}
+
+	{
 #ifdef _WIN32
-	fprintf(stderr, "[SQLITE_SCAN_DEBUG] SQLiteQueryFunction registered successfully\n");
-	fflush(stderr);
+		fprintf(stderr, "[SQLITE_SCAN_DEBUG] Creating and registering SQLiteQueryFunction\n");
+		fflush(stderr);
 #endif
+		SQLiteQueryFunction sqlite_query;
+		ExtensionUtil::RegisterFunction(db, sqlite_query);
+#ifdef _WIN32
+		fprintf(stderr, "[SQLITE_SCAN_DEBUG] SQLiteQueryFunction registered successfully\n");
+		fflush(stderr);
+#endif
+	}
 
 	auto &config = DBConfig::GetConfig(db);
 	config.AddExtensionOption("sqlite_all_varchar", "Load all SQLite columns as VARCHAR columns", LogicalType::BOOLEAN);
