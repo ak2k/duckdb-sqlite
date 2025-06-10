@@ -127,10 +127,24 @@ static void SqliteInitInternal(ClientContext &context, const SqliteBindData &bin
 		fflush(stderr);
 #endif
 	}
+#ifdef _WIN32
+	fprintf(stderr, "[SQLITE_SCAN_DEBUG] Building SQL query\n");
+	fprintf(stderr, "[SQLITE_SCAN_DEBUG] column_ids size: %zu\n", local_state.column_ids.size());
+	fprintf(stderr, "[SQLITE_SCAN_DEBUG] bind_data.sql.empty(): %s\n", bind_data.sql.empty() ? "true" : "false");
+	fflush(stderr);
+#endif
 	string sql;
 	if (bind_data.sql.empty()) {
+#ifdef _WIN32
+		fprintf(stderr, "[SQLITE_SCAN_DEBUG] bind_data.names size: %zu\n", bind_data.names.size());
+		fflush(stderr);
+#endif
 		auto col_names = StringUtil::Join(
 		    local_state.column_ids.data(), local_state.column_ids.size(), ", ", [&](const idx_t column_id) {
+#ifdef _WIN32
+			    fprintf(stderr, "[SQLITE_SCAN_DEBUG] Processing column_id: %llu\n", (unsigned long long)column_id);
+			    fflush(stderr);
+#endif
 			    return column_id == (column_t)-1
 			               ? "ROWID"
 			               : '"' + SQLiteUtils::SanitizeIdentifier(bind_data.names[column_id]) + '"';
@@ -295,15 +309,7 @@ static void SqliteScan(ClientContext &context, TableFunctionInput &data, DataChu
 				return;
 			}
 			auto &stmt = state.stmt;
-#ifdef _WIN32
-			fprintf(stderr, "[SQLITE_SCAN_DEBUG] Calling stmt.Step() for row %llu\n", (unsigned long long)out_idx);
-			fflush(stderr);
-#endif
 			auto has_more = stmt.Step();
-#ifdef _WIN32
-			fprintf(stderr, "[SQLITE_SCAN_DEBUG] stmt.Step() returned: %s\n", has_more ? "true" : "false");
-			fflush(stderr);
-#endif
 			if (!has_more) {
 				state.done = true;
 				output.SetCardinality(out_idx);
