@@ -47,9 +47,9 @@ TableFunction SQLiteTableEntry::GetScanFunction(ClientContext &context, unique_p
 	result->table = this;
 
 	bind_data = std::move(result);
-	// Create a temporary SqliteScanFunction and return it
-	// DuckDB will copy it, avoiding static initialization issues on Windows
-	SqliteScanFunction scan_function;
+	// Use a function-local static to avoid creating instances during static initialization
+	// This pattern is safe on Windows and avoids the binary deserializer assertion
+	static SqliteScanFunction scan_function;
 	return static_cast<TableFunction>(scan_function);
 }
 

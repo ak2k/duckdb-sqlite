@@ -69,12 +69,11 @@ SQLiteQueryFunction::SQLiteQueryFunction()
 	fprintf(stderr, "[SQLITE_SCAN_DEBUG] SQLiteQueryFunction constructor called\n");
 	fflush(stderr);
 #endif
-	// Create a temporary SqliteScanFunction to copy its function pointers
+	// Use static methods to get function pointers without creating an instance
 	// This avoids static initialization issues on Windows
-	SqliteScanFunction scan_function;
-	init_global = scan_function.init_global;
-	init_local = scan_function.init_local;
-	function = scan_function.function;
+	init_global = SqliteScanFunction::GetInitGlobal();
+	init_local = SqliteScanFunction::GetInitLocal();
+	function = SqliteScanFunction::GetFunction();
 	global_initialization = TableFunctionInitialization::INITIALIZE_ON_SCHEDULE;
 #ifdef _WIN32
 	fprintf(stderr, "[SQLITE_SCAN_DEBUG] SQLiteQueryFunction constructor completed\n");

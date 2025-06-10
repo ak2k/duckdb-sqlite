@@ -391,6 +391,19 @@ SqliteScanFunction::SqliteScanFunction()
 	projection_pushdown = true;
 }
 
+// Static method implementations
+table_function_init_global_t SqliteScanFunction::GetInitGlobal() {
+	return SqliteInitGlobalState;
+}
+
+table_function_init_local_t SqliteScanFunction::GetInitLocal() {
+	return SqliteInitLocalState;
+}
+
+table_function_t SqliteScanFunction::GetFunction() {
+	return SqliteScan;
+}
+
 struct AttachFunctionData : public TableFunctionData {
 	AttachFunctionData() {
 	}

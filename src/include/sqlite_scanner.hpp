@@ -35,6 +35,11 @@ struct SqliteBindData : public TableFunctionData {
 class SqliteScanFunction : public TableFunction {
 public:
 	SqliteScanFunction();
+	
+	// Static methods to access scan function pointers
+	static table_function_init_global_t GetInitGlobal();
+	static table_function_init_local_t GetInitLocal();
+	static table_function_t GetFunction();
 };
 
 class SqliteAttachFunction : public TableFunction {

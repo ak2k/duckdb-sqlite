@@ -30,24 +30,24 @@ static void LoadInternal(DatabaseInstance &db) {
 	fflush(stderr);
 #endif
 
-	// Create table functions on the heap to avoid static initialization issues
-	// We let DuckDB manage their lifetime after registration
-	auto sqlite_scan = make_uniq<SqliteScanFunction>();
+	// Use function-local statics for TableFunction objects
+	// This pattern avoids static initialization issues on Windows
+	static SqliteScanFunction sqlite_scan;
 #ifdef _WIN32
-	fprintf(stderr, "[SQLITE_SCAN_DEBUG] Created SqliteScanFunction at %p\n", sqlite_scan.get());
+	fprintf(stderr, "[SQLITE_SCAN_DEBUG] Using SqliteScanFunction at %p\n", (void*)&sqlite_scan);
 	fflush(stderr);
 #endif
-	ExtensionUtil::RegisterFunction(db, *sqlite_scan);
+	ExtensionUtil::RegisterFunction(db, sqlite_scan);
 #ifdef _WIN32
 	fprintf(stderr, "[SQLITE_SCAN_DEBUG] sqlite_scan function registered\n");
 	fflush(stderr);
 #endif
 
-	auto sqlite_attach = make_uniq<SqliteAttachFunction>();
-	ExtensionUtil::RegisterFunction(db, *sqlite_attach);
+	static SqliteAttachFunction sqlite_attach;
+	ExtensionUtil::RegisterFunction(db, sqlite_attach);
 
-	auto sqlite_query = make_uniq<SQLiteQueryFunction>();
-	ExtensionUtil::RegisterFunction(db, *sqlite_query);
+	static SQLiteQueryFunction sqlite_query;
+	ExtensionUtil::RegisterFunction(db, sqlite_query);
 
 	auto &config = DBConfig::GetConfig(db);
 	config.AddExtensionOption("sqlite_all_varchar", "Load all SQLite columns as VARCHAR columns", LogicalType::BOOLEAN);
