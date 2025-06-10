@@ -29,9 +29,11 @@ static void LoadInternal(DatabaseInstance &db) {
 	fprintf(stderr, "[SQLITE_SCAN_DEBUG] LoadInternal called\n");
 	fflush(stderr);
 #endif
-	SqliteScanFunction sqlite_fun;
+	// Use function-local statics to ensure proper initialization order on Windows
+	// This avoids the binary_deserializer assertion in debug builds
+	static SqliteScanFunction sqlite_fun;
 #ifdef _WIN32
-	fprintf(stderr, "[SQLITE_SCAN_DEBUG] SqliteScanFunction created\n");
+	fprintf(stderr, "[SQLITE_SCAN_DEBUG] SqliteScanFunction created/retrieved\n");
 	fflush(stderr);
 #endif
 	ExtensionUtil::RegisterFunction(db, sqlite_fun);
@@ -40,10 +42,10 @@ static void LoadInternal(DatabaseInstance &db) {
 	fflush(stderr);
 #endif
 
-	SqliteAttachFunction attach_func;
+	static SqliteAttachFunction attach_func;
 	ExtensionUtil::RegisterFunction(db, attach_func);
 
-	SQLiteQueryFunction query_func;
+	static SQLiteQueryFunction query_func;
 	ExtensionUtil::RegisterFunction(db, query_func);
 
 	auto &config = DBConfig::GetConfig(db);
