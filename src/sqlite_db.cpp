@@ -27,11 +27,27 @@ SQLiteDB::~SQLiteDB() {
 }
 
 SQLiteDB::SQLiteDB(SQLiteDB &&other) noexcept {
+#ifdef _WIN32
+	fprintf(stderr, "[SQLITE_DB_DEBUG] Move constructor called, other.db=%p, this->db=%p\n", (void*)other.db, (void*)db);
+	fflush(stderr);
+#endif
 	std::swap(db, other.db);
+#ifdef _WIN32
+	fprintf(stderr, "[SQLITE_DB_DEBUG] After move constructor, other.db=%p, this->db=%p\n", (void*)other.db, (void*)db);
+	fflush(stderr);
+#endif
 }
 
 SQLiteDB &SQLiteDB::operator=(SQLiteDB &&other) noexcept {
+#ifdef _WIN32
+	fprintf(stderr, "[SQLITE_DB_DEBUG] Move assignment called, other.db=%p, this->db=%p\n", (void*)other.db, (void*)db);
+	fflush(stderr);
+#endif
 	std::swap(db, other.db);
+#ifdef _WIN32
+	fprintf(stderr, "[SQLITE_DB_DEBUG] After move assignment, other.db=%p, this->db=%p\n", (void*)other.db, (void*)db);
+	fflush(stderr);
+#endif
 	return *this;
 }
 
@@ -104,7 +120,7 @@ SQLiteDB SQLiteDB::Open(const string &path, const SQLiteOpenOptions &options, Cl
 #ifdef _WIN32
 			fprintf(stderr, "[SQLITE_DB_DEBUG] sqlite3_open_v2 returned: %d (SQLITE_OK=%d)\n", rc, SQLITE_OK);
 			if (rc == SQLITE_OK) {
-				fprintf(stderr, "[SQLITE_DB_DEBUG] Successfully opened remote database\n");
+				fprintf(stderr, "[SQLITE_DB_DEBUG] Successfully opened remote database, db pointer: %p\n", (void*)result.db);
 			}
 			fflush(stderr);
 #endif
@@ -140,6 +156,10 @@ SQLiteDB SQLiteDB::Open(const string &path, const SQLiteOpenOptions &options, Cl
 				}
 			}
 			
+#ifdef _WIN32
+			fprintf(stderr, "[SQLITE_DB_DEBUG] About to return SQLiteDB object with db=%p\n", (void*)result.db);
+			fflush(stderr);
+#endif
 			return result;
 		} else {
 			// Path not supported by our VFS - use standard SQLite

@@ -120,10 +120,19 @@ static void SqliteInitInternal(ClientContext &context, const SqliteBindData &bin
 #endif
 		SQLiteOpenOptions options;
 		options.access_mode = AccessMode::READ_ONLY;
+#ifdef _WIN32
+		fprintf(stderr, "[SQLITE_SCAN_DEBUG] About to call SQLiteDB::Open\n");
+		fflush(stderr);
+#endif
 		local_state.owned_db = SQLiteDB::Open(bind_data.file_name.c_str(), options, context);
+#ifdef _WIN32
+		fprintf(stderr, "[SQLITE_SCAN_DEBUG] SQLiteDB::Open returned, assigning db pointer\n");
+		fflush(stderr);
+#endif
 		local_state.db = &local_state.owned_db;
 #ifdef _WIN32
 		fprintf(stderr, "[SQLITE_SCAN_DEBUG] Database opened successfully in SqliteInitInternal\n");
+		fprintf(stderr, "[SQLITE_SCAN_DEBUG] local_state.owned_db.db pointer: %p\n", (void*)local_state.owned_db.db);
 		fflush(stderr);
 #endif
 	}
