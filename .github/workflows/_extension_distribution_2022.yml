@@ -227,6 +227,7 @@ jobs:
           path: 'extension-ci-tools'
           ref: ${{ inputs.ci_tools_version }}
           repository: ${{ inputs.override_ci_tools_repository }}
+          fetch-depth: 0
 
       - name: Checkout DuckDB to version
         if: ${{inputs.duckdb_version != ''}}
