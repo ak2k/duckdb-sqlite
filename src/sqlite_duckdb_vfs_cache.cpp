@@ -64,8 +64,17 @@ struct DuckDBVFSWrapper {
 };
 
 // Global registry of VFS wrappers to manage their lifetime
-static std::mutex vfs_registry_mutex;
-static std::unordered_map<ClientContext*, unique_ptr<DuckDBVFSWrapper>> vfs_registry;
+// Use function-local statics to ensure proper initialization order on Windows
+struct VFSRegistryData {
+	std::mutex mutex;
+	std::unordered_map<ClientContext*, unique_ptr<DuckDBVFSWrapper>> registry;
+};
+
+static VFSRegistryData& GetVFSRegistryData() {
+	// Function-local static ensures thread-safe initialization
+	static VFSRegistryData data;
+	return data;
+}
 
 // SQLite page size constant for sector size calculations
 static constexpr int DEFAULT_SQLITE_SECTOR_SIZE = 4096;
@@ -251,11 +260,12 @@ void SQLiteDuckDBCacheVFS::Register(ClientContext &context) {
 #endif
 #endif
 
-	std::lock_guard<std::mutex> lock(vfs_registry_mutex);
+	auto& registry_data = GetVFSRegistryData();
+	std::lock_guard<std::mutex> lock(registry_data.mutex);
 	
 	// Check if this context already has a VFS registered
-	auto it = vfs_registry.find(&context);
-	if (it != vfs_registry.end()) {
+	auto it = registry_data.registry.find(&context);
+	if (it != registry_data.registry.end()) {
 		// Already registered for this context
 		return;
 	}
@@ -310,34 +320,36 @@ void SQLiteDuckDBCacheVFS::Register(ClientContext &context) {
 	}
 
 	// Store in registry
-	vfs_registry[&context] = std::move(wrapper);
+	registry_data.registry[&context] = std::move(wrapper);
 	
 #ifdef _WIN32
 #ifdef DEBUG
-	fprintf(stderr, "[SQLITE_VFS_DEBUG] Registered VFS: %s\n", vfs_registry[&context]->vfs_name);
+	fprintf(stderr, "[SQLITE_VFS_DEBUG] Registered VFS: %s\n", registry_data.registry[&context]->vfs_name);
 #endif
 #endif
 }
 
 // New method to unregister VFS when context is destroyed
 void SQLiteDuckDBCacheVFS::Unregister(ClientContext &context) {
-	std::lock_guard<std::mutex> lock(vfs_registry_mutex);
+	auto& registry_data = GetVFSRegistryData();
+	std::lock_guard<std::mutex> lock(registry_data.mutex);
 	
-	auto it = vfs_registry.find(&context);
-	if (it != vfs_registry.end()) {
+	auto it = registry_data.registry.find(&context);
+	if (it != registry_data.registry.end()) {
 		// Unregister from SQLite
 		sqlite3_vfs_unregister(&it->second->base);
 		// Remove from registry
-		vfs_registry.erase(it);
+		registry_data.registry.erase(it);
 	}
 }
 
 // New method to get VFS name for a context
 const char *SQLiteDuckDBCacheVFS::GetVFSNameForContext(ClientContext &context) {
-	std::lock_guard<std::mutex> lock(vfs_registry_mutex);
+	auto& registry_data = GetVFSRegistryData();
+	std::lock_guard<std::mutex> lock(registry_data.mutex);
 	
-	auto it = vfs_registry.find(&context);
-	if (it != vfs_registry.end() && it->second->vfs_name) {
+	auto it = registry_data.registry.find(&context);
+	if (it != registry_data.registry.end() && it->second->vfs_name) {
 		return it->second->vfs_name;  // Return the C-style string directly
 	}
 	
