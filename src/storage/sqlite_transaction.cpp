@@ -15,6 +15,12 @@
 
 namespace duckdb {
 
+// Function-local static mutex to avoid Windows DLL initialization issues
+mutex& SQLiteTransaction::GetInitializationMutex() {
+	static mutex initialization_mutex;
+	return initialization_mutex;
+}
+
 SQLiteTransaction::SQLiteTransaction(SQLiteCatalog &sqlite_catalog, TransactionManager &manager, ClientContext &context)
     : Transaction(manager, context), sqlite_catalog(sqlite_catalog), db(nullptr), started(false) {
 #ifdef _WIN32
@@ -58,7 +64,7 @@ SQLiteDB &SQLiteTransaction::GetDB() {
 #endif
 	// Use double-checked locking pattern for thread-safe lazy initialization
 	if (!db || !started) {
-		lock_guard<mutex> lock(initialization_mutex);
+		lock_guard<mutex> lock(GetInitializationMutex());
 		
 		// Check again after acquiring lock (double-checked locking)
 		if (!db) {

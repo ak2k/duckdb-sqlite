@@ -27,8 +27,11 @@ public:
 
 private:
 	SQLiteCatalog &sqlite_catalog;
-	mutex transaction_lock;
+	// REMOVED: mutex transaction_lock; - causes issues on Windows
 	reference_map_t<Transaction, unique_ptr<SQLiteTransaction>> transactions;
+	
+	// Function-local static mutex to avoid Windows DLL initialization issues
+	static mutex& GetTransactionLock();
 };
 
 } // namespace duckdb
