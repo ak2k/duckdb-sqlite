@@ -113,10 +113,18 @@ static void SqliteInitInternal(ClientContext &context, const SqliteBindData &bin
 	// function
 	local_state.stmt.Close();
 	if (!local_state.db) {
+#ifdef _WIN32
+		fprintf(stderr, "[SQLITE_SCAN_DEBUG] Opening database: %s\n", bind_data.file_name.c_str());
+		fflush(stderr);
+#endif
 		SQLiteOpenOptions options;
 		options.access_mode = AccessMode::READ_ONLY;
 		local_state.owned_db = SQLiteDB::Open(bind_data.file_name.c_str(), options, context);
 		local_state.db = &local_state.owned_db;
+#ifdef _WIN32
+		fprintf(stderr, "[SQLITE_SCAN_DEBUG] Database opened successfully in SqliteInitInternal\n");
+		fflush(stderr);
+#endif
 	}
 	string sql;
 	if (bind_data.sql.empty()) {
@@ -141,7 +149,15 @@ static void SqliteInitInternal(ClientContext &context, const SqliteBindData &bin
 	} else {
 		sql = bind_data.sql;
 	}
+#ifdef _WIN32
+	fprintf(stderr, "[SQLITE_SCAN_DEBUG] Preparing SQL statement: %s\n", sql.c_str());
+	fflush(stderr);
+#endif
 	local_state.stmt = local_state.db->Prepare(sql.c_str());
+#ifdef _WIN32
+	fprintf(stderr, "[SQLITE_SCAN_DEBUG] SQL statement prepared successfully\n");
+	fflush(stderr);
+#endif
 }
 
 static unique_ptr<NodeStatistics> SqliteCardinality(ClientContext &context, const FunctionData *bind_data_p) {
@@ -241,10 +257,8 @@ static void SqliteScan(ClientContext &context, TableFunctionInput &data, DataChu
 #ifdef _WIN32
 	static int scan_call_count = 0;
 	scan_call_count++;
-	if (scan_call_count % 1000 == 0) {
-		fprintf(stderr, "[SQLITE_SCAN_DEBUG] SqliteScan called %d times\n", scan_call_count);
-		fflush(stderr);
-	}
+	fprintf(stderr, "[SQLITE_SCAN_DEBUG] SqliteScan called (call #%d)\n", scan_call_count);
+	fflush(stderr);
 #endif
 	auto &state = data.local_state->Cast<SqliteLocalState>();
 	auto &gstate = data.global_state->Cast<SqliteGlobalState>();
@@ -264,7 +278,15 @@ static void SqliteScan(ClientContext &context, TableFunctionInput &data, DataChu
 				return;
 			}
 			auto &stmt = state.stmt;
+#ifdef _WIN32
+			fprintf(stderr, "[SQLITE_SCAN_DEBUG] Calling stmt.Step() for row %llu\n", (unsigned long long)out_idx);
+			fflush(stderr);
+#endif
 			auto has_more = stmt.Step();
+#ifdef _WIN32
+			fprintf(stderr, "[SQLITE_SCAN_DEBUG] stmt.Step() returned: %s\n", has_more ? "true" : "false");
+			fflush(stderr);
+#endif
 			if (!has_more) {
 				state.done = true;
 				output.SetCardinality(out_idx);
