@@ -17,6 +17,10 @@ namespace duckdb {
 
 SQLiteTransaction::SQLiteTransaction(SQLiteCatalog &sqlite_catalog, TransactionManager &manager, ClientContext &context)
     : Transaction(manager, context), sqlite_catalog(sqlite_catalog), db(nullptr), started(false) {
+#ifdef _WIN32
+	fprintf(stderr, "[SQLITE_TRANSACTION_DEBUG] SQLiteTransaction constructor called\n");
+	fflush(stderr);
+#endif
 	// CRITICAL FIX: Defer database connection AND transaction start to avoid deadlock
 	// Opening SQLite connections + starting transactions for remote files while holding 
 	// MetaTransaction lock can cause deadlocks due to HTTP requests and caching operations.
@@ -24,10 +28,18 @@ SQLiteTransaction::SQLiteTransaction(SQLiteCatalog &sqlite_catalog, TransactionM
 }
 
 SQLiteTransaction::~SQLiteTransaction() {
+#ifdef _WIN32
+	fprintf(stderr, "[SQLITE_TRANSACTION_DEBUG] SQLiteTransaction destructor called\n");
+	fflush(stderr);
+#endif
 	sqlite_catalog.ReleaseInMemoryDatabase();
 }
 
 void SQLiteTransaction::Start() {
+#ifdef _WIN32
+	fprintf(stderr, "[SQLITE_TRANSACTION_DEBUG] SQLiteTransaction::Start called\n");
+	fflush(stderr);
+#endif
 	if (!started) {
 		GetDB(); // This will handle both connection and transaction start
 	}
@@ -40,12 +52,21 @@ void SQLiteTransaction::Rollback() {
 }
 
 SQLiteDB &SQLiteTransaction::GetDB() {
+#ifdef _WIN32
+	fprintf(stderr, "[SQLITE_TRANSACTION_DEBUG] SQLiteTransaction::GetDB called\n");
+	fflush(stderr);
+#endif
 	// Use double-checked locking pattern for thread-safe lazy initialization
 	if (!db || !started) {
 		lock_guard<mutex> lock(initialization_mutex);
 		
 		// Check again after acquiring lock (double-checked locking)
 		if (!db) {
+#ifdef _WIN32
+			fprintf(stderr, "[SQLITE_TRANSACTION_DEBUG] Opening database connection\n");
+			fprintf(stderr, "[SQLITE_TRANSACTION_DEBUG] Path: %s\n", sqlite_catalog.path.c_str());
+			fflush(stderr);
+#endif
 			if (sqlite_catalog.InMemory()) {
 				// in-memory database - get a reference to the in-memory connection
 				db = sqlite_catalog.GetInMemoryDatabase(*context.lock());
