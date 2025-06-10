@@ -15,7 +15,7 @@ jobs:
   # Quick validation job to test workflow syntax and setup
   validate-workflow:
     name: Validate Workflow Syntax
-    runs-on: windows-2019
+    runs-on: windows-2022
     steps:
       - uses: actions/checkout@v4
         with:
@@ -75,7 +75,7 @@ jobs:
   windows-debug-test:
     name: Windows Debug Build for SIGSEGV Investigation
     needs: validate-workflow  # Only run after validation passes
-    runs-on: windows-2019
+    runs-on: windows-2022
     env:
       VCPKG_TOOLCHAIN_PATH: ${{ github.workspace }}/vcpkg/scripts/buildsystems/vcpkg.cmake
       VCPKG_TARGET_TRIPLET: x64-windows-static-md
