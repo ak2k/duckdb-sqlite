@@ -4,6 +4,7 @@
 #include "duckdb/storage/statistics/base_statistics.hpp"
 #include "sqlite_scanner.hpp"
 #include "duckdb/storage/table_storage_info.hpp"
+#include "sqlite_functions_singleton.hpp"
 
 namespace duckdb {
 
@@ -47,9 +48,8 @@ TableFunction SQLiteTableEntry::GetScanFunction(ClientContext &context, unique_p
 	result->table = this;
 
 	bind_data = std::move(result);
-	// Use function-local static to avoid static initialization issues on Windows
-	static SqliteScanFunction sqlite_scan_function;
-	return static_cast<TableFunction>(sqlite_scan_function);
+	// Use singleton to avoid static initialization issues on Windows
+	return static_cast<TableFunction>(SqliteFunctions::GetScanFunction());
 }
 
 TableStorageInfo SQLiteTableEntry::GetStorageInfo(ClientContext &context) {

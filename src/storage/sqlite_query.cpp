@@ -10,6 +10,7 @@
 #include "sqlite_db.hpp"
 #include "sqlite_stmt.hpp"
 #include "sqlite_utils.hpp"
+#include "sqlite_functions_singleton.hpp"
 
 namespace duckdb {
 
@@ -65,8 +66,8 @@ static unique_ptr<FunctionData> SQLiteQueryBind(ClientContext &context, TableFun
 
 SQLiteQueryFunction::SQLiteQueryFunction()
     : TableFunction("sqlite_query", {LogicalType::VARCHAR, LogicalType::VARCHAR}, nullptr, SQLiteQueryBind) {
-	// Use function-local static to avoid static initialization issues on Windows
-	static SqliteScanFunction scan_function;
+	// Use singleton to avoid static initialization issues on Windows
+	auto &scan_function = SqliteFunctions::GetScanFunction();
 	init_global = scan_function.init_global;
 	init_local = scan_function.init_local;
 	function = scan_function.function;

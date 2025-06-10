@@ -11,6 +11,7 @@
 #include "sqlite_scanner.hpp"
 #include "sqlite_storage.hpp"
 #include "sqlite_scanner_extension.hpp"
+#include "sqlite_functions_singleton.hpp"
 
 #include "duckdb/catalog/catalog.hpp"
 #include "duckdb/main/extension_util.hpp"
@@ -25,35 +26,19 @@ static void SetSqliteDebugQueryPrint(ClientContext &context, SetScope scope, Val
 }
 
 static void LoadInternal(DatabaseInstance &db) {
-	// Guard against multiple initialization calls
-	static bool initialized = false;
-	if (initialized) {
-		return;
-	}
-	initialized = true;
-	
 #ifdef _WIN32
 	fprintf(stderr, "[SQLITE_SCAN_DEBUG] LoadInternal called\n");
 	fflush(stderr);
 #endif
-	// Use function-local statics to ensure proper initialization order on Windows
-	// This avoids the binary_deserializer assertion in debug builds
-	static SqliteScanFunction sqlite_fun;
-#ifdef _WIN32
-	fprintf(stderr, "[SQLITE_SCAN_DEBUG] SqliteScanFunction created/retrieved\n");
-	fflush(stderr);
-#endif
-	ExtensionUtil::RegisterFunction(db, sqlite_fun);
+	// Get singleton instances - thread-safe initialization
+	ExtensionUtil::RegisterFunction(db, SqliteFunctions::GetScanFunction());
 #ifdef _WIN32
 	fprintf(stderr, "[SQLITE_SCAN_DEBUG] sqlite_scan function registered\n");
 	fflush(stderr);
 #endif
 
-	static SqliteAttachFunction attach_func;
-	ExtensionUtil::RegisterFunction(db, attach_func);
-
-	static SQLiteQueryFunction query_func;
-	ExtensionUtil::RegisterFunction(db, query_func);
+	ExtensionUtil::RegisterFunction(db, SqliteFunctions::GetAttachFunction());
+	ExtensionUtil::RegisterFunction(db, SqliteFunctions::GetQueryFunction());
 
 	auto &config = DBConfig::GetConfig(db);
 	config.AddExtensionOption("sqlite_all_varchar", "Load all SQLite columns as VARCHAR columns", LogicalType::BOOLEAN);
