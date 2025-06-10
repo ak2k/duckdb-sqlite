@@ -380,7 +380,7 @@ SqliteScanFunction::SqliteScanFunction()
     : TableFunction("sqlite_scan", {LogicalType::VARCHAR, LogicalType::VARCHAR}, SqliteScan, SqliteBind,
                     SqliteInitGlobalState, SqliteInitLocalState) {
 #ifdef _WIN32
-	fprintf(stderr, "[SQLITE_SCAN_DEBUG] Registering sqlite_scan function\n");
+	fprintf(stderr, "[SQLITE_SCAN_DEBUG] SqliteScanFunction constructor called at %p\n", (void*)this);
 	fprintf(stderr, "[SQLITE_SCAN_DEBUG] Function name: %s\n", name.c_str());
 	fprintf(stderr, "[SQLITE_SCAN_DEBUG] Number of parameters: %zu\n", arguments.size());
 	fflush(stderr);

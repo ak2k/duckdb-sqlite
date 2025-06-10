@@ -47,7 +47,9 @@ TableFunction SQLiteTableEntry::GetScanFunction(ClientContext &context, unique_p
 	result->table = this;
 
 	bind_data = std::move(result);
-	return static_cast<TableFunction>(SqliteScanFunction());
+	// Use function-local static to avoid static initialization issues on Windows
+	static SqliteScanFunction sqlite_scan_function;
+	return static_cast<TableFunction>(sqlite_scan_function);
 }
 
 TableStorageInfo SQLiteTableEntry::GetStorageInfo(ClientContext &context) {
