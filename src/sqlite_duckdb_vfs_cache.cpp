@@ -126,8 +126,6 @@ DuckDBCachedFile::DuckDBCachedFile(ClientContext &context, const string &path)
 	// during SQLite VFS callbacks, which might be in a different serialization context
 }
 
-DuckDBCachedFile::~DuckDBCachedFile() = default;
-
 void DuckDBCachedFile::EnsureInitialized() {
 	if (initialized) {
 		return;
@@ -205,7 +203,7 @@ int DuckDBCachedFile::Read(void *buffer, int amount, sqlite3_int64 offset) {
 		// Read-ahead optimization: SQLite typically reads in 4KB pages, but
 		// DuckDB's CachingFileSystem works better with larger blocks.
 		// We'll read at least 1MB to populate the cache.
-		static constexpr int64_t MIN_READ_SIZE = 1024 * 1024; // 1MB
+		static constexpr int64_t MIN_READ_SIZE = static_cast<int64_t>(1024) * 1024; // 1MB
 		
 		// Calculate the read-ahead size
 		int64_t read_ahead_size = (std::max)(static_cast<int64_t>(amount), MIN_READ_SIZE);

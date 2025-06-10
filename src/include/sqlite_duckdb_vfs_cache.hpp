@@ -26,7 +26,7 @@ class ClientContext;
 class DuckDBCachedFile {
 public:
 	DuckDBCachedFile(ClientContext &context, const string &path);
-	~DuckDBCachedFile();
+	~DuckDBCachedFile() = default;
 
 	// Read data from the file at the specified offset
 	int Read(void *buffer, int amount, sqlite3_int64 offset);
@@ -54,9 +54,9 @@ private:
 	uint64_t current_readahead_size;
 	
 	// Read-ahead size constants (not currently used)
-	static constexpr uint64_t MIN_READAHEAD_SIZE = 1024 * 1024;       // 1MB
-	static constexpr uint64_t MAX_READAHEAD_SIZE = 128 * 1024 * 1024; // 128MB
-	static constexpr uint64_t SEQUENTIAL_THRESHOLD = 64 * 1024;       // 64KB
+	static constexpr uint64_t MIN_READAHEAD_SIZE = static_cast<uint64_t>(1024) * 1024;       // 1MB
+	static constexpr uint64_t MAX_READAHEAD_SIZE = static_cast<uint64_t>(128) * 1024 * 1024; // 128MB
+	static constexpr uint64_t SEQUENTIAL_THRESHOLD = static_cast<uint64_t>(64) * 1024;       // 64KB
 	
 	// Future read-ahead methods (not implemented)
 	uint64_t CalculateReadAheadSize(sqlite3_int64 offset, int amount) const;
