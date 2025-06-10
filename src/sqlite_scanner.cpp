@@ -46,6 +46,15 @@ struct SqliteGlobalState : public GlobalTableFunctionState {
 
 static unique_ptr<FunctionData> SqliteBind(ClientContext &context, TableFunctionBindInput &input,
                                            vector<LogicalType> &return_types, vector<string> &names) {
+#ifdef _WIN32
+	fprintf(stderr, "[SQLITE_SCAN_DEBUG] SqliteBind called with %zu parameters\n", input.inputs.size());
+	fflush(stderr);
+	if (input.inputs.size() >= 2) {
+		fprintf(stderr, "[SQLITE_SCAN_DEBUG] Parameter 0 type: %s\n", input.inputs[0].type().ToString().c_str());
+		fprintf(stderr, "[SQLITE_SCAN_DEBUG] Parameter 1 type: %s\n", input.inputs[1].type().ToString().c_str());
+		fflush(stderr);
+	}
+#endif
 
 	auto result = make_uniq<SqliteBindData>();
 	result->file_name = input.inputs[0].GetValue<string>();
@@ -349,14 +358,26 @@ SqliteStatistics(ClientContext &context, const FunctionData *bind_data_p,
 }
 */
 
+#ifdef _WIN32
+#pragma pack(push, 1)
+#endif
 SqliteScanFunction::SqliteScanFunction()
     : TableFunction("sqlite_scan", {LogicalType::VARCHAR, LogicalType::VARCHAR}, SqliteScan, SqliteBind,
                     SqliteInitGlobalState, SqliteInitLocalState) {
+#ifdef _WIN32
+	fprintf(stderr, "[SQLITE_SCAN_DEBUG] Registering sqlite_scan function\n");
+	fprintf(stderr, "[SQLITE_SCAN_DEBUG] Function name: %s\n", name.c_str());
+	fprintf(stderr, "[SQLITE_SCAN_DEBUG] Number of parameters: %zu\n", arguments.size());
+	fflush(stderr);
+#endif
 	cardinality = SqliteCardinality;
 	to_string = SqliteToString;
 	get_bind_info = SqliteBindInfo;
 	projection_pushdown = true;
 }
+#ifdef _WIN32
+#pragma pack(pop)
+#endif
 
 struct AttachFunctionData : public TableFunctionData {
 	AttachFunctionData() {

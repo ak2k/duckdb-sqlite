@@ -21,8 +21,20 @@ static void SetSqliteDebugQueryPrint(ClientContext &context, SetScope scope, Val
 }
 
 static void LoadInternal(DatabaseInstance &db) {
+#ifdef _WIN32
+	fprintf(stderr, "[SQLITE_SCAN_DEBUG] LoadInternal called\n");
+	fflush(stderr);
+#endif
 	SqliteScanFunction sqlite_fun;
+#ifdef _WIN32
+	fprintf(stderr, "[SQLITE_SCAN_DEBUG] SqliteScanFunction created\n");
+	fflush(stderr);
+#endif
 	ExtensionUtil::RegisterFunction(db, sqlite_fun);
+#ifdef _WIN32
+	fprintf(stderr, "[SQLITE_SCAN_DEBUG] sqlite_scan function registered\n");
+	fflush(stderr);
+#endif
 
 	SqliteAttachFunction attach_func;
 	ExtensionUtil::RegisterFunction(db, attach_func);
@@ -46,7 +58,15 @@ void SqliteScannerExtension::Load(DuckDB &db) {
 }
 
 DUCKDB_EXTENSION_API void sqlite_scanner_init(duckdb::DatabaseInstance &db) {
+#ifdef _WIN32
+	fprintf(stderr, "[SQLITE_SCAN_DEBUG] sqlite_scanner_init called\n");
+	fflush(stderr);
+#endif
 	LoadInternal(db);
+#ifdef _WIN32
+	fprintf(stderr, "[SQLITE_SCAN_DEBUG] sqlite_scanner_init completed\n");
+	fflush(stderr);
+#endif
 }
 
 DUCKDB_EXTENSION_API const char *sqlite_scanner_version() {

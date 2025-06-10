@@ -1,0 +1,48 @@
+# name: test/sql/scanner/http_sqlite_debug_params.test
+# description: Test sqlite_scan with various parameter types to debug Windows issue
+# group: [sqlite_scanner]
+
+require sqlite_scanner
+
+statement ok
+INSTALL httpfs;
+
+statement ok
+LOAD httpfs;
+
+# Test 1: Check extension is loaded
+query I
+SELECT sqlite_scanner_version() IS NOT NULL AS loaded;
+----
+true
+
+# Test 2: Try with empty strings
+statement error
+SELECT * FROM sqlite_scan('', '');
+
+# Test 3: Try with NULL values
+statement error
+SELECT * FROM sqlite_scan(NULL, NULL);
+
+# Test 4: Try with a local non-existent file
+statement error
+SELECT * FROM sqlite_scan('non_existent.db', 'test_table');
+
+# Test 5: Try with just a file path, no table
+statement error
+SELECT * FROM sqlite_scan('test.db', NULL);
+
+# Test 6: Create a local SQLite database first
+statement ok
+ATTACH ':memory:' AS test_db;
+
+statement ok
+CREATE TABLE test_db.simple_table (id INTEGER, name VARCHAR);
+
+statement ok
+INSERT INTO test_db.simple_table VALUES (1, 'test');
+
+# Test 7: Try the actual HTTP scan that's failing
+# This should trigger all our debug output
+statement error
+SELECT COUNT(*) FROM sqlite_scan('https://github.com/lerocha/chinook-database/raw/refs/heads/master/ChinookDatabase/DataSources/Chinook_Sqlite.sqlite', 'Artist');
