@@ -10,7 +10,6 @@
 #include "sqlite_db.hpp"
 #include "sqlite_stmt.hpp"
 #include "sqlite_utils.hpp"
-#include "sqlite_functions_singleton.hpp"
 
 namespace duckdb {
 
@@ -70,8 +69,9 @@ SQLiteQueryFunction::SQLiteQueryFunction()
 	fprintf(stderr, "[SQLITE_SCAN_DEBUG] SQLiteQueryFunction constructor called\n");
 	fflush(stderr);
 #endif
-	// Use singleton to avoid static initialization issues on Windows
-	auto &scan_function = SqliteFunctions::GetScanFunction();
+	// Create a temporary SqliteScanFunction to copy its function pointers
+	// This avoids static initialization issues on Windows
+	SqliteScanFunction scan_function;
 	init_global = scan_function.init_global;
 	init_local = scan_function.init_local;
 	function = scan_function.function;
