@@ -399,18 +399,28 @@ SqliteStatistics(ClientContext &context, const FunctionData *bind_data_p,
 */
 
 SqliteScanFunction::SqliteScanFunction()
-    : TableFunction("sqlite_scan", {LogicalType::VARCHAR, LogicalType::VARCHAR}, SqliteScan, SqliteBind,
-                    SqliteInitGlobalState, SqliteInitLocalState) {
+    : TableFunction() {
 #ifdef _WIN32
 	fprintf(stderr, "[SQLITE_SCAN_DEBUG] SqliteScanFunction constructor called at %p\n", (void*)this);
-	fprintf(stderr, "[SQLITE_SCAN_DEBUG] Function name: %s\n", name.c_str());
-	fprintf(stderr, "[SQLITE_SCAN_DEBUG] Number of parameters: %zu\n", arguments.size());
 	fflush(stderr);
 #endif
+	// Initialize members after construction to avoid static initialization issues
+	name = "sqlite_scan";
+	arguments.push_back(LogicalType::VARCHAR);
+	arguments.push_back(LogicalType::VARCHAR);
+	function = SqliteScan;
+	bind = SqliteBind;
+	init_global = SqliteInitGlobalState;
+	init_local = SqliteInitLocalState;
 	cardinality = SqliteCardinality;
 	to_string = SqliteToString;
 	get_bind_info = SqliteBindInfo;
 	projection_pushdown = true;
+#ifdef _WIN32
+	fprintf(stderr, "[SQLITE_SCAN_DEBUG] Function name: %s\n", name.c_str());
+	fprintf(stderr, "[SQLITE_SCAN_DEBUG] Number of parameters: %zu\n", arguments.size());
+	fflush(stderr);
+#endif
 }
 
 // Static method implementations
@@ -480,7 +490,12 @@ static void AttachFunction(ClientContext &context, TableFunctionInput &data_p, D
 }
 
 SqliteAttachFunction::SqliteAttachFunction()
-    : TableFunction("sqlite_attach", {LogicalType::VARCHAR}, AttachFunction, AttachBind) {
+    : TableFunction() {
+	// Initialize members after construction to avoid static initialization issues
+	name = "sqlite_attach";
+	arguments.push_back(LogicalType::VARCHAR);
+	function = AttachFunction;
+	bind = AttachBind;
 	named_parameters["overwrite"] = LogicalType::BOOLEAN;
 }
 

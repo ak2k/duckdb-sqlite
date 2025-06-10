@@ -64,13 +64,17 @@ static unique_ptr<FunctionData> SQLiteQueryBind(ClientContext &context, TableFun
 }
 
 SQLiteQueryFunction::SQLiteQueryFunction()
-    : TableFunction("sqlite_query", {LogicalType::VARCHAR, LogicalType::VARCHAR}, nullptr, SQLiteQueryBind) {
+    : TableFunction() {
 #ifdef _WIN32
 	fprintf(stderr, "[SQLITE_SCAN_DEBUG] SQLiteQueryFunction constructor called\n");
 	fflush(stderr);
 #endif
+	// Initialize members after construction to avoid static initialization issues
+	name = "sqlite_query";
+	arguments.push_back(LogicalType::VARCHAR);
+	arguments.push_back(LogicalType::VARCHAR);
+	bind = SQLiteQueryBind;
 	// Use static methods to get function pointers without creating an instance
-	// This avoids static initialization issues on Windows
 	init_global = SqliteScanFunction::GetInitGlobal();
 	init_local = SqliteScanFunction::GetInitLocal();
 	function = SqliteScanFunction::GetFunction();
