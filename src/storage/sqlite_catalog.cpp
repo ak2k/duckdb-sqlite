@@ -12,14 +12,31 @@ namespace duckdb {
 
 SQLiteCatalog::SQLiteCatalog(AttachedDatabase &db_p, const string &path, SQLiteOpenOptions options_p)
     : Catalog(db_p), path(path), options(std::move(options_p)), in_memory(path == ":memory:"), active_in_memory(false), in_memory_db_initialized(false) {
+#ifdef _WIN32
+	fprintf(stderr, "[SQLITE_CATALOG_DEBUG] SQLiteCatalog constructor called with path: %s\n", path.c_str());
+	fprintf(stderr, "[SQLITE_CATALOG_DEBUG] in_memory: %s\n", in_memory ? "true" : "false");
+	fflush(stderr);
+#endif
 }
 
 SQLiteCatalog::~SQLiteCatalog() {
+#ifdef _WIN32
+	fprintf(stderr, "[SQLITE_CATALOG_DEBUG] SQLiteCatalog destructor called\n");
+	fflush(stderr);
+#endif
 }
 
 void SQLiteCatalog::Initialize(bool load_builtin) {
+#ifdef _WIN32
+	fprintf(stderr, "[SQLITE_CATALOG_DEBUG] SQLiteCatalog::Initialize called\n");
+	fflush(stderr);
+#endif
 	CreateSchemaInfo info;
 	main_schema = make_uniq<SQLiteSchemaEntry>(*this, info);
+#ifdef _WIN32
+	fprintf(stderr, "[SQLITE_CATALOG_DEBUG] SQLiteCatalog::Initialize completed\n");
+	fflush(stderr);
+#endif
 }
 
 optional_ptr<CatalogEntry> SQLiteCatalog::CreateSchema(CatalogTransaction transaction, CreateSchemaInfo &info) {
