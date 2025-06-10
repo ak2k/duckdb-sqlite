@@ -72,10 +72,23 @@ SQLiteDB SQLiteDB::Open(const string &path, const SQLiteOpenOptions &options, bo
 }
 
 SQLiteDB SQLiteDB::Open(const string &path, const SQLiteOpenOptions &options, ClientContext &context, bool is_shared) {
+#ifdef _WIN32
+	fprintf(stderr, "[SQLITE_DB_DEBUG] SQLiteDB::Open called with path: %s\n", path.c_str());
+	fprintf(stderr, "[SQLITE_DB_DEBUG] IsRemoteFile: %s\n", FileSystem::IsRemoteFile(path) ? "true" : "false");
+	fflush(stderr);
+#endif
 	// Remote SQLite databases are accessed through our custom VFS
 	// which uses DuckDB's CachingFileSystem for efficient block caching
 	if (FileSystem::IsRemoteFile(path)) {
+#ifdef _WIN32
+		fprintf(stderr, "[SQLITE_DB_DEBUG] Remote file detected, checking VFS support\n");
+		fflush(stderr);
+#endif
 		if (SQLiteDuckDBCacheVFS::CanHandlePath(context, path)) {
+#ifdef _WIN32
+			fprintf(stderr, "[SQLITE_DB_DEBUG] VFS can handle path, registering VFS\n");
+			fflush(stderr);
+#endif
 			// Register our VFS to handle this remote file
 			SQLiteDuckDBCacheVFS::Register(context);
 			SQLiteDB result;
@@ -88,6 +101,13 @@ SQLiteDB SQLiteDB::Open(const string &path, const SQLiteOpenOptions &options, Cl
 			flags |= SQLITE_OPEN_EXRESCODE;
 			
 			auto rc = sqlite3_open_v2(path.c_str(), &result.db, flags, SQLiteDuckDBCacheVFS::GetVFSNameForContext(context));
+#ifdef _WIN32
+			fprintf(stderr, "[SQLITE_DB_DEBUG] sqlite3_open_v2 returned: %d (SQLITE_OK=%d)\n", rc, SQLITE_OK);
+			if (rc == SQLITE_OK) {
+				fprintf(stderr, "[SQLITE_DB_DEBUG] Successfully opened remote database\n");
+			}
+			fflush(stderr);
+#endif
 			if (rc != SQLITE_OK) {
 				// SQLite failed to open the file. Try opening it directly with
 				// DuckDB's filesystem to get a more specific error message.

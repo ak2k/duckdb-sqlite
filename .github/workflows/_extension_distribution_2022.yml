@@ -252,6 +252,18 @@ jobs:
           repository: ${{ inputs.override_ci_tools_repository }}
           fetch-depth: 0
 
+      - name: Debug Docker build
+        shell: bash
+        run: |
+          echo "=== Checking Docker directory ==="
+          ls -la ./extension-ci-tools/docker/${{ matrix.duckdb_arch }}/ || echo "Directory not found"
+          echo "=== First 10 lines of Dockerfile ==="
+          head -10 ./extension-ci-tools/docker/${{ matrix.duckdb_arch }}/Dockerfile || echo "Dockerfile not found"
+          echo "=== Docker version ==="
+          docker version
+          echo "=== Current architecture ==="
+          uname -m
+
       - name: Build Docker image
         shell: bash
         run: |

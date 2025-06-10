@@ -3,6 +3,10 @@
 #endif
 #include "duckdb.hpp"
 
+#ifdef _WIN32
+#include <windows.h>
+#endif
+
 #include "sqlite_db.hpp"
 #include "sqlite_scanner.hpp"
 #include "sqlite_storage.hpp"
@@ -60,13 +64,31 @@ void SqliteScannerExtension::Load(DuckDB &db) {
 DUCKDB_EXTENSION_API void sqlite_scanner_init(duckdb::DatabaseInstance &db) {
 #ifdef _WIN32
 	fprintf(stderr, "[SQLITE_SCAN_DEBUG] sqlite_scanner_init called\n");
+	// Check stack size on Windows
+	ULONG_PTR low, high;
+	GetCurrentThreadStackLimits(&low, &high);
+	fprintf(stderr, "[SQLITE_SCAN_DEBUG] Stack size: %llu KB\n", (high - low) / 1024);
 	fflush(stderr);
 #endif
-	LoadInternal(db);
+	try {
+		LoadInternal(db);
 #ifdef _WIN32
-	fprintf(stderr, "[SQLITE_SCAN_DEBUG] sqlite_scanner_init completed\n");
-	fflush(stderr);
+		fprintf(stderr, "[SQLITE_SCAN_DEBUG] sqlite_scanner_init completed successfully\n");
+		fflush(stderr);
 #endif
+	} catch (const std::exception &e) {
+#ifdef _WIN32
+		fprintf(stderr, "[SQLITE_SCAN_DEBUG] Exception in sqlite_scanner_init: %s\n", e.what());
+		fflush(stderr);
+#endif
+		throw;
+	} catch (...) {
+#ifdef _WIN32
+		fprintf(stderr, "[SQLITE_SCAN_DEBUG] Unknown exception in sqlite_scanner_init\n");
+		fflush(stderr);
+#endif
+		throw;
+	}
 }
 
 DUCKDB_EXTENSION_API const char *sqlite_scanner_version() {

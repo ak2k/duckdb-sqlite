@@ -59,6 +59,11 @@ static unique_ptr<FunctionData> SqliteBind(ClientContext &context, TableFunction
 	auto result = make_uniq<SqliteBindData>();
 	result->file_name = input.inputs[0].GetValue<string>();
 	result->table_name = input.inputs[1].GetValue<string>();
+#ifdef _WIN32
+	fprintf(stderr, "[SQLITE_SCAN_DEBUG] File: %s, Table: %s\n", 
+	        result->file_name.c_str(), result->table_name.c_str());
+	fflush(stderr);
+#endif
 
 	SQLiteDB db;
 	SQLiteStatement stmt;
@@ -96,6 +101,11 @@ static unique_ptr<FunctionData> SqliteBind(ClientContext &context, TableFunction
 
 static void SqliteInitInternal(ClientContext &context, const SqliteBindData &bind_data, SqliteLocalState &local_state,
                                idx_t rowid_min, idx_t rowid_max) {
+#ifdef _WIN32
+	fprintf(stderr, "[SQLITE_SCAN_DEBUG] SqliteInitInternal called - rowid_min: %llu, rowid_max: %llu\n", 
+	        (unsigned long long)rowid_min, (unsigned long long)rowid_max);
+	fflush(stderr);
+#endif
 	D_ASSERT(rowid_min <= rowid_max);
 
 	local_state.done = false;
@@ -228,6 +238,14 @@ static timestamp_t ConvertTimestampFloat(sqlite3_value *val) {
 }
 
 static void SqliteScan(ClientContext &context, TableFunctionInput &data, DataChunk &output) {
+#ifdef _WIN32
+	static int scan_call_count = 0;
+	scan_call_count++;
+	if (scan_call_count % 1000 == 0) {
+		fprintf(stderr, "[SQLITE_SCAN_DEBUG] SqliteScan called %d times\n", scan_call_count);
+		fflush(stderr);
+	}
+#endif
 	auto &state = data.local_state->Cast<SqliteLocalState>();
 	auto &gstate = data.global_state->Cast<SqliteGlobalState>();
 	auto &bind_data = data.bind_data->Cast<SqliteBindData>();
@@ -358,9 +376,6 @@ SqliteStatistics(ClientContext &context, const FunctionData *bind_data_p,
 }
 */
 
-#ifdef _WIN32
-#pragma pack(push, 1)
-#endif
 SqliteScanFunction::SqliteScanFunction()
     : TableFunction("sqlite_scan", {LogicalType::VARCHAR, LogicalType::VARCHAR}, SqliteScan, SqliteBind,
                     SqliteInitGlobalState, SqliteInitLocalState) {
@@ -375,9 +390,6 @@ SqliteScanFunction::SqliteScanFunction()
 	get_bind_info = SqliteBindInfo;
 	projection_pushdown = true;
 }
-#ifdef _WIN32
-#pragma pack(pop)
-#endif
 
 struct AttachFunctionData : public TableFunctionData {
 	AttachFunctionData() {

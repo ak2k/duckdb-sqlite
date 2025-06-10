@@ -23,3 +23,40 @@ test_debug_internal: data/db/tpch.db
 
 test_reldebug_internal: data/db/tpch.db
 	SQLITE_TPCH_GENERATED=1 ./build/reldebug/$(TEST_PATH) "$(PROJ_DIR)test/*"
+
+# Tidy check target for static analysis
+.PHONY: tidy-check
+tidy-check: release
+	@command -v clang-tidy >/dev/null 2>&1 || { \
+		echo "Error: clang-tidy is not installed."; \
+		exit 1; \
+	}
+	@echo "Running clang-tidy on source files..."
+	@find src/ -name '*.cpp' -not -path 'src/sqlite/*' | while read file; do \
+		echo "Checking $$file..."; \
+		clang-tidy $$file \
+			-p build/release \
+			--header-filter='$(PROJ_DIR)src/include/.*' \
+			--config-file=.clang-tidy \
+			|| exit 1; \
+	done
+	@echo "Clang-tidy check completed successfully!"
+
+# Tidy fix target to automatically fix issues
+.PHONY: tidy-fix
+tidy-fix: release
+	@command -v clang-tidy >/dev/null 2>&1 || { \
+		echo "Error: clang-tidy is not installed."; \
+		exit 1; \
+	}
+	@echo "Running clang-tidy with fixes on source files..."
+	@find src/ -name '*.cpp' -not -path 'src/sqlite/*' | while read file; do \
+		echo "Fixing $$file..."; \
+		clang-tidy $$file \
+			-p build/release \
+			--header-filter='$(PROJ_DIR)src/include/.*' \
+			--config-file=.clang-tidy \
+			--fix \
+			--fix-errors; \
+	done
+	@echo "Clang-tidy fixes applied!"
