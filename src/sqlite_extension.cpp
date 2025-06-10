@@ -25,6 +25,13 @@ static void SetSqliteDebugQueryPrint(ClientContext &context, SetScope scope, Val
 }
 
 static void LoadInternal(DatabaseInstance &db) {
+	// Guard against multiple initialization calls
+	static bool initialized = false;
+	if (initialized) {
+		return;
+	}
+	initialized = true;
+	
 #ifdef _WIN32
 	fprintf(stderr, "[SQLITE_SCAN_DEBUG] LoadInternal called\n");
 	fflush(stderr);
@@ -54,7 +61,10 @@ static void LoadInternal(DatabaseInstance &db) {
 	config.AddExtensionOption("sqlite_debug_show_queries", "DEBUG SETTING: print all queries sent to SQLite to stdout",
 	                          LogicalType::BOOLEAN, Value::BOOLEAN(false), SetSqliteDebugQueryPrint);
 
-	config.storage_extensions["sqlite_scanner"] = make_uniq<SQLiteStorageExtension>();
+	// Only register storage extension if not already present
+	if (config.storage_extensions.find("sqlite_scanner") == config.storage_extensions.end()) {
+		config.storage_extensions["sqlite_scanner"] = make_uniq<SQLiteStorageExtension>();
+	}
 	
 	// HTTP SQLite support is handled entirely by VFS through DuckDB's CachingFileSystem
 }
@@ -98,6 +108,9 @@ DUCKDB_EXTENSION_API const char *sqlite_scanner_version() {
 }
 
 DUCKDB_EXTENSION_API void sqlite_scanner_storage_init(DBConfig &config) {
-	config.storage_extensions["sqlite_scanner"] = make_uniq<SQLiteStorageExtension>();
+	// Only register if not already present
+	if (config.storage_extensions.find("sqlite_scanner") == config.storage_extensions.end()) {
+		config.storage_extensions["sqlite_scanner"] = make_uniq<SQLiteStorageExtension>();
+	}
 }
 }
