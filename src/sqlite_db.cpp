@@ -152,11 +152,26 @@ SQLiteDB SQLiteDB::Open(const string &path, const SQLiteOpenOptions &options, Cl
 }
 
 bool SQLiteDB::TryPrepare(const string &query, SQLiteStatement &stmt) {
+#ifdef _WIN32
+	fprintf(stderr, "[SQLITE_DB_DEBUG] TryPrepare called with query: %s\n", query.c_str());
+	fprintf(stderr, "[SQLITE_DB_DEBUG] db pointer: %p\n", (void*)db);
+	fflush(stderr);
+#endif
+	if (!db) {
+		throw InternalException("SQLiteDB::TryPrepare called with null database pointer");
+	}
 	stmt.db = db;
 	if (debug_sqlite_print_queries) {
 		Printer::Print(query + "\n");
 	}
 	auto rc = sqlite3_prepare_v2(db, query.c_str(), -1, &stmt.stmt, nullptr);
+#ifdef _WIN32
+	fprintf(stderr, "[SQLITE_DB_DEBUG] sqlite3_prepare_v2 returned: %d\n", rc);
+	if (rc != SQLITE_OK) {
+		fprintf(stderr, "[SQLITE_DB_DEBUG] Error message: %s\n", sqlite3_errmsg(db));
+	}
+	fflush(stderr);
+#endif
 	if (rc != SQLITE_OK) {
 		return false;
 	}

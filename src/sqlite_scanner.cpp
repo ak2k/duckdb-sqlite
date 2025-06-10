@@ -95,6 +95,7 @@ static unique_ptr<FunctionData> SqliteBind(ClientContext &context, TableFunction
 
 	result->names = names;
 	result->types = return_types;
+	result->global_db = nullptr;  // Initialize to prevent undefined behavior
 
 	return std::move(result);
 }
@@ -150,14 +151,30 @@ static void SqliteInitInternal(ClientContext &context, const SqliteBindData &bin
 		sql = bind_data.sql;
 	}
 #ifdef _WIN32
-	fprintf(stderr, "[SQLITE_SCAN_DEBUG] Preparing SQL statement: %s\n", sql.c_str());
+	fprintf(stderr, "[SQLITE_SCAN_DEBUG] About to prepare SQL statement: %s\n", sql.c_str());
+	fprintf(stderr, "[SQLITE_SCAN_DEBUG] local_state.db pointer: %p\n", (void*)local_state.db);
+	fprintf(stderr, "[SQLITE_SCAN_DEBUG] local_state.owned_db pointer: %p\n", (void*)&local_state.owned_db);
 	fflush(stderr);
 #endif
-	local_state.stmt = local_state.db->Prepare(sql.c_str());
+	try {
+		local_state.stmt = local_state.db->Prepare(sql.c_str());
 #ifdef _WIN32
-	fprintf(stderr, "[SQLITE_SCAN_DEBUG] SQL statement prepared successfully\n");
-	fflush(stderr);
+		fprintf(stderr, "[SQLITE_SCAN_DEBUG] SQL statement prepared successfully\n");
+		fflush(stderr);
 #endif
+	} catch (const std::exception& e) {
+#ifdef _WIN32
+		fprintf(stderr, "[SQLITE_SCAN_DEBUG] Exception during Prepare: %s\n", e.what());
+		fflush(stderr);
+#endif
+		throw;
+	} catch (...) {
+#ifdef _WIN32
+		fprintf(stderr, "[SQLITE_SCAN_DEBUG] Unknown exception during Prepare\n");
+		fflush(stderr);
+#endif
+		throw;
+	}
 }
 
 static unique_ptr<NodeStatistics> SqliteCardinality(ClientContext &context, const FunctionData *bind_data_p) {
