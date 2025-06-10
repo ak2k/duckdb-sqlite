@@ -10,6 +10,7 @@ SqliteScanFunction& SqliteFunctions::GetScanFunction() {
 	fprintf(stderr, "[SQLITE_SCAN_DEBUG] GetScanFunction called (call #%d)\n", call_count);
 	fflush(stderr);
 #endif
+	// Use Meyers' singleton pattern - C++11 guarantees thread-safe initialization
 	static SqliteScanFunction instance;
 #ifdef _WIN32
 	fprintf(stderr, "[SQLITE_SCAN_DEBUG] GetScanFunction returning instance at %p\n", (void*)&instance);
@@ -36,6 +37,9 @@ SQLiteQueryFunction& SqliteFunctions::GetQueryFunction() {
 	fprintf(stderr, "[SQLITE_SCAN_DEBUG] GetQueryFunction called\n");
 	fflush(stderr);
 #endif
+	// First ensure SqliteScanFunction is initialized since SQLiteQueryFunction depends on it
+	GetScanFunction();
+	
 	static SQLiteQueryFunction instance;
 #ifdef _WIN32
 	fprintf(stderr, "[SQLITE_SCAN_DEBUG] GetQueryFunction returning instance at %p\n", (void*)&instance);
