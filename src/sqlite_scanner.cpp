@@ -448,6 +448,15 @@ SqliteScanFunction::SqliteScanFunction()
 	to_string = SqliteToString;
 	get_bind_info = SqliteBindInfo;
 	projection_pushdown = true;
+	// Explicitly set serialization-related members to avoid Windows debug assertion
+	serialize = nullptr;
+	deserialize = nullptr;
+	verify_serialization = false;
+	// Initialize other flags to their defaults
+	filter_pushdown = false;
+	filter_prune = false;
+	sampling_pushdown = false;
+	late_materialization = false;
 #ifdef _WIN32
 	fprintf(stderr, "[SQLITE_SCAN_DEBUG] Function name: %s\n", name.c_str());
 	fprintf(stderr, "[SQLITE_SCAN_DEBUG] Number of parameters: %zu\n", arguments.size());
@@ -529,6 +538,10 @@ SqliteAttachFunction::SqliteAttachFunction()
 	function = AttachFunction;
 	bind = AttachBind;
 	named_parameters["overwrite"] = LogicalType::BOOLEAN;
+	// Explicitly set serialization-related members to avoid Windows debug assertion
+	serialize = nullptr;
+	deserialize = nullptr;
+	verify_serialization = false;
 }
 
 } // namespace duckdb

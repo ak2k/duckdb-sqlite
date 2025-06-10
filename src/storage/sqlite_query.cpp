@@ -79,6 +79,10 @@ SQLiteQueryFunction::SQLiteQueryFunction()
 	init_local = SqliteScanFunction::GetInitLocal();
 	function = SqliteScanFunction::GetFunction();
 	global_initialization = TableFunctionInitialization::INITIALIZE_ON_SCHEDULE;
+	// Explicitly set serialization-related members to avoid Windows debug assertion
+	serialize = nullptr;
+	deserialize = nullptr;
+	verify_serialization = false;
 #ifdef _WIN32
 	fprintf(stderr, "[SQLITE_SCAN_DEBUG] SQLiteQueryFunction constructor completed\n");
 	fflush(stderr);
