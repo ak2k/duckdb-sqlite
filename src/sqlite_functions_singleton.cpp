@@ -5,20 +5,42 @@ namespace duckdb {
 
 SqliteScanFunction& SqliteFunctions::GetScanFunction() {
 #ifdef _WIN32
-	fprintf(stderr, "[SQLITE_SCAN_DEBUG] GetScanFunction called\n");
+	static int call_count = 0;
+	call_count++;
+	fprintf(stderr, "[SQLITE_SCAN_DEBUG] GetScanFunction called (call #%d)\n", call_count);
 	fflush(stderr);
 #endif
 	static SqliteScanFunction instance;
+#ifdef _WIN32
+	fprintf(stderr, "[SQLITE_SCAN_DEBUG] GetScanFunction returning instance at %p\n", (void*)&instance);
+	fflush(stderr);
+#endif
 	return instance;
 }
 
 SqliteAttachFunction& SqliteFunctions::GetAttachFunction() {
+#ifdef _WIN32
+	fprintf(stderr, "[SQLITE_SCAN_DEBUG] GetAttachFunction called\n");
+	fflush(stderr);
+#endif
 	static SqliteAttachFunction instance;
+#ifdef _WIN32
+	fprintf(stderr, "[SQLITE_SCAN_DEBUG] GetAttachFunction returning instance at %p\n", (void*)&instance);
+	fflush(stderr);
+#endif
 	return instance;
 }
 
 SQLiteQueryFunction& SqliteFunctions::GetQueryFunction() {
+#ifdef _WIN32
+	fprintf(stderr, "[SQLITE_SCAN_DEBUG] GetQueryFunction called\n");
+	fflush(stderr);
+#endif
 	static SQLiteQueryFunction instance;
+#ifdef _WIN32
+	fprintf(stderr, "[SQLITE_SCAN_DEBUG] GetQueryFunction returning instance at %p\n", (void*)&instance);
+	fflush(stderr);
+#endif
 	return instance;
 }
 

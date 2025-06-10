@@ -30,15 +30,27 @@ static void LoadInternal(DatabaseInstance &db) {
 	fprintf(stderr, "[SQLITE_SCAN_DEBUG] LoadInternal called\n");
 	fflush(stderr);
 #endif
-	// Get singleton instances - thread-safe initialization
-	ExtensionUtil::RegisterFunction(db, SqliteFunctions::GetScanFunction());
+	// Initialize all singletons first to avoid circular dependencies
+	// SQLiteQueryFunction depends on SqliteScanFunction, so we need to ensure
+	// SqliteScanFunction is fully constructed before SQLiteQueryFunction
+	auto &scan_func = SqliteFunctions::GetScanFunction();
+	auto &attach_func = SqliteFunctions::GetAttachFunction();
+	auto &query_func = SqliteFunctions::GetQueryFunction();
+	
+#ifdef _WIN32
+	fprintf(stderr, "[SQLITE_SCAN_DEBUG] All singletons initialized, now registering functions\n");
+	fflush(stderr);
+#endif
+
+	// Now register them
+	ExtensionUtil::RegisterFunction(db, scan_func);
 #ifdef _WIN32
 	fprintf(stderr, "[SQLITE_SCAN_DEBUG] sqlite_scan function registered\n");
 	fflush(stderr);
 #endif
 
-	ExtensionUtil::RegisterFunction(db, SqliteFunctions::GetAttachFunction());
-	ExtensionUtil::RegisterFunction(db, SqliteFunctions::GetQueryFunction());
+	ExtensionUtil::RegisterFunction(db, attach_func);
+	ExtensionUtil::RegisterFunction(db, query_func);
 
 	auto &config = DBConfig::GetConfig(db);
 	config.AddExtensionOption("sqlite_all_varchar", "Load all SQLite columns as VARCHAR columns", LogicalType::BOOLEAN);
