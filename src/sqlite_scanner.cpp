@@ -46,40 +46,16 @@ struct SqliteGlobalState : public GlobalTableFunctionState {
 
 static unique_ptr<FunctionData> SqliteBind(ClientContext &context, TableFunctionBindInput &input,
                                            vector<LogicalType> &return_types, vector<string> &names) {
-#ifdef _WIN32
-	fprintf(stderr, "[SQLITE_SCAN_DEBUG] SqliteBind called with %zu parameters\n", input.inputs.size());
-	fflush(stderr);
-	if (input.inputs.size() >= 2) {
-		fprintf(stderr, "[SQLITE_SCAN_DEBUG] Parameter 0 type: %s\n", input.inputs[0].type().ToString().c_str());
-		fprintf(stderr, "[SQLITE_SCAN_DEBUG] Parameter 1 type: %s\n", input.inputs[1].type().ToString().c_str());
-		fflush(stderr);
-	}
-#endif
 
 	auto result = make_uniq<SqliteBindData>();
 	result->file_name = input.inputs[0].GetValue<string>();
 	result->table_name = input.inputs[1].GetValue<string>();
-#ifdef _WIN32
-	fprintf(stderr, "[SQLITE_SCAN_DEBUG] File: %s, Table: %s\n", 
-	        result->file_name.c_str(), result->table_name.c_str());
-	fflush(stderr);
-#endif
 
 	SQLiteDB db;
 	SQLiteStatement stmt;
 	SQLiteOpenOptions options;
 	options.access_mode = AccessMode::READ_ONLY;
-#ifdef _WIN32
-	fprintf(stderr, "[SQLITE_SCAN_DEBUG] About to call SQLiteDB::Open in SqliteBind\n");
-	fprintf(stderr, "[SQLITE_SCAN_DEBUG] db object address: %p\n", (void*)&db);
-	fflush(stderr);
-#endif
 	db = SQLiteDB::Open(result->file_name, options, context);
-#ifdef _WIN32
-	fprintf(stderr, "[SQLITE_SCAN_DEBUG] SQLiteDB::Open returned in SqliteBind, move assignment completed\n");
-	fprintf(stderr, "[SQLITE_SCAN_DEBUG] db.db pointer after assignment: %p\n", (void*)db.db);
-	fflush(stderr);
-#endif
 
 	ColumnList columns;
 	vector<unique_ptr<Constraint>> constraints;
@@ -89,15 +65,7 @@ static unique_ptr<FunctionData> SqliteBind(ClientContext &context, TableFunction
 	if (context.TryGetCurrentSetting("sqlite_all_varchar", sqlite_all_varchar)) {
 		result->all_varchar = BooleanValue::Get(sqlite_all_varchar);
 	}
-#ifdef _WIN32
-	fprintf(stderr, "[SQLITE_SCAN_DEBUG] About to call db.GetTableInfo\n");
-	fflush(stderr);
-#endif
 	db.GetTableInfo(result->table_name, columns, constraints, result->all_varchar);
-#ifdef _WIN32
-	fprintf(stderr, "[SQLITE_SCAN_DEBUG] db.GetTableInfo completed successfully\n");
-	fflush(stderr);
-#endif
 	for (auto &column : columns.Logical()) {
 		names.push_back(column.GetName());
 		return_types.push_back(column.GetType());
@@ -115,21 +83,11 @@ static unique_ptr<FunctionData> SqliteBind(ClientContext &context, TableFunction
 	result->types = return_types;
 	result->global_db = nullptr;  // Initialize to prevent undefined behavior
 
-#ifdef _WIN32
-	fprintf(stderr, "[SQLITE_SCAN_DEBUG] SqliteBind about to return, db will be destroyed\n");
-	fprintf(stderr, "[SQLITE_SCAN_DEBUG] db object address: %p, db.db pointer: %p\n", (void*)&db, (void*)db.db);
-	fflush(stderr);
-#endif
 	return std::move(result);
 }
 
 static void SqliteInitInternal(ClientContext &context, const SqliteBindData &bind_data, SqliteLocalState &local_state,
                                idx_t rowid_min, idx_t rowid_max) {
-#ifdef _WIN32
-	fprintf(stderr, "[SQLITE_SCAN_DEBUG] SqliteInitInternal called - rowid_min: %llu, rowid_max: %llu\n", 
-	        (unsigned long long)rowid_min, (unsigned long long)rowid_max);
-	fflush(stderr);
-#endif
 	D_ASSERT(rowid_min <= rowid_max);
 
 	local_state.done = false;
@@ -137,46 +95,15 @@ static void SqliteInitInternal(ClientContext &context, const SqliteBindData &bin
 	// function
 	local_state.stmt.Close();
 	if (!local_state.db) {
-#ifdef _WIN32
-		fprintf(stderr, "[SQLITE_SCAN_DEBUG] Opening database: %s\n", bind_data.file_name.c_str());
-		fflush(stderr);
-#endif
 		SQLiteOpenOptions options;
 		options.access_mode = AccessMode::READ_ONLY;
-#ifdef _WIN32
-		fprintf(stderr, "[SQLITE_SCAN_DEBUG] About to call SQLiteDB::Open\n");
-		fflush(stderr);
-#endif
 		local_state.owned_db = SQLiteDB::Open(bind_data.file_name.c_str(), options, context);
-#ifdef _WIN32
-		fprintf(stderr, "[SQLITE_SCAN_DEBUG] SQLiteDB::Open returned, assigning db pointer\n");
-		fflush(stderr);
-#endif
 		local_state.db = &local_state.owned_db;
-#ifdef _WIN32
-		fprintf(stderr, "[SQLITE_SCAN_DEBUG] Database opened successfully in SqliteInitInternal\n");
-		fprintf(stderr, "[SQLITE_SCAN_DEBUG] local_state.owned_db.db pointer: %p\n", (void*)local_state.owned_db.db);
-		fflush(stderr);
-#endif
 	}
-#ifdef _WIN32
-	fprintf(stderr, "[SQLITE_SCAN_DEBUG] Building SQL query\n");
-	fprintf(stderr, "[SQLITE_SCAN_DEBUG] column_ids size: %zu\n", local_state.column_ids.size());
-	fprintf(stderr, "[SQLITE_SCAN_DEBUG] bind_data.sql.empty(): %s\n", bind_data.sql.empty() ? "true" : "false");
-	fflush(stderr);
-#endif
 	string sql;
 	if (bind_data.sql.empty()) {
-#ifdef _WIN32
-		fprintf(stderr, "[SQLITE_SCAN_DEBUG] bind_data.names size: %zu\n", bind_data.names.size());
-		fflush(stderr);
-#endif
 		auto col_names = StringUtil::Join(
 		    local_state.column_ids.data(), local_state.column_ids.size(), ", ", [&](const idx_t column_id) {
-#ifdef _WIN32
-			    fprintf(stderr, "[SQLITE_SCAN_DEBUG] Processing column_id: %llu\n", (unsigned long long)column_id);
-			    fflush(stderr);
-#endif
 			    return column_id == (column_t)-1
 			               ? "ROWID"
 			               : '"' + SQLiteUtils::SanitizeIdentifier(bind_data.names[column_id]) + '"';
@@ -196,29 +123,11 @@ static void SqliteInitInternal(ClientContext &context, const SqliteBindData &bin
 	} else {
 		sql = bind_data.sql;
 	}
-#ifdef _WIN32
-	fprintf(stderr, "[SQLITE_SCAN_DEBUG] About to prepare SQL statement: %s\n", sql.c_str());
-	fprintf(stderr, "[SQLITE_SCAN_DEBUG] local_state.db pointer: %p\n", (void*)local_state.db);
-	fprintf(stderr, "[SQLITE_SCAN_DEBUG] local_state.owned_db pointer: %p\n", (void*)&local_state.owned_db);
-	fflush(stderr);
-#endif
 	try {
 		local_state.stmt = local_state.db->Prepare(sql.c_str());
-#ifdef _WIN32
-		fprintf(stderr, "[SQLITE_SCAN_DEBUG] SQL statement prepared successfully\n");
-		fflush(stderr);
-#endif
 	} catch (const std::exception& e) {
-#ifdef _WIN32
-		fprintf(stderr, "[SQLITE_SCAN_DEBUG] Exception during Prepare: %s\n", e.what());
-		fflush(stderr);
-#endif
 		throw;
 	} catch (...) {
-#ifdef _WIN32
-		fprintf(stderr, "[SQLITE_SCAN_DEBUG] Unknown exception during Prepare\n");
-		fflush(stderr);
-#endif
 		throw;
 	}
 }
@@ -317,12 +226,6 @@ static timestamp_t ConvertTimestampFloat(sqlite3_value *val) {
 }
 
 static void SqliteScan(ClientContext &context, TableFunctionInput &data, DataChunk &output) {
-#ifdef _WIN32
-	static int scan_call_count = 0;
-	scan_call_count++;
-	fprintf(stderr, "[SQLITE_SCAN_DEBUG] SqliteScan called (call #%d)\n", scan_call_count);
-	fflush(stderr);
-#endif
 	auto &state = data.local_state->Cast<SqliteLocalState>();
 	auto &gstate = data.global_state->Cast<SqliteGlobalState>();
 	auto &bind_data = data.bind_data->Cast<SqliteBindData>();
@@ -456,19 +359,10 @@ SqliteStatistics(ClientContext &context, const FunctionData *bind_data_p,
 SqliteScanFunction::SqliteScanFunction()
     : TableFunction("sqlite_scan", {LogicalType::VARCHAR, LogicalType::VARCHAR}, SqliteScan, SqliteBind,
                     SqliteInitGlobalState, SqliteInitLocalState) {
-#ifdef _WIN32
-	fprintf(stderr, "[SQLITE_SCAN_DEBUG] SqliteScanFunction constructor called at %p\n", (void*)this);
-	fflush(stderr);
-#endif
 	cardinality = SqliteCardinality;
 	to_string = SqliteToString;
 	get_bind_info = SqliteBindInfo;
 	projection_pushdown = true;
-#ifdef _WIN32
-	fprintf(stderr, "[SQLITE_SCAN_DEBUG] Function name: %s\n", name.c_str());
-	fprintf(stderr, "[SQLITE_SCAN_DEBUG] Number of parameters: %zu\n", arguments.size());
-	fflush(stderr);
-#endif
 }
 
 // Static method implementations

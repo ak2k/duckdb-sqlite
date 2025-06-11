@@ -17,53 +17,32 @@ namespace duckdb {
 static bool debug_sqlite_print_queries = false;
 
 SQLiteDB::SQLiteDB() : db(nullptr) {
-#ifdef _WIN32
-	fprintf(stderr, "[SQLITE_DB_DEBUG] Default constructor called, this=%p, db=%p\n", (void*)this, (void*)db);
-	fflush(stderr);
-#endif
+
 }
 
 SQLiteDB::SQLiteDB(sqlite3 *db) : db(db) {
 }
 
 SQLiteDB::~SQLiteDB() {
-#ifdef _WIN32
-	fprintf(stderr, "[SQLITE_DB_DEBUG] Destructor called, this=%p, db=%p\n", (void*)this, (void*)db);
-	fflush(stderr);
-#endif
+
 	Close();
-#ifdef _WIN32
-	fprintf(stderr, "[SQLITE_DB_DEBUG] Destructor finished\n");
-	fflush(stderr);
-#endif
+
 }
 
 SQLiteDB::SQLiteDB(SQLiteDB &&other) noexcept : db(nullptr) {
-#ifdef _WIN32
-	fprintf(stderr, "[SQLITE_DB_DEBUG] Move constructor called, other.db=%p, this->db=%p\n", (void*)other.db, (void*)db);
-	fflush(stderr);
-#endif
+
 	std::swap(db, other.db);
-#ifdef _WIN32
-	fprintf(stderr, "[SQLITE_DB_DEBUG] After move constructor, other.db=%p, this->db=%p\n", (void*)other.db, (void*)db);
-	fflush(stderr);
-#endif
+
 }
 
 SQLiteDB &SQLiteDB::operator=(SQLiteDB &&other) noexcept {
-#ifdef _WIN32
-	fprintf(stderr, "[SQLITE_DB_DEBUG] Move assignment called, other.db=%p, this->db=%p\n", (void*)other.db, (void*)db);
-	fflush(stderr);
-#endif
+
 	if (this != &other) {
 		// Close any existing database first
 		Close();
 		std::swap(db, other.db);
 	}
-#ifdef _WIN32
-	fprintf(stderr, "[SQLITE_DB_DEBUG] After move assignment, other.db=%p, this->db=%p\n", (void*)other.db, (void*)db);
-	fflush(stderr);
-#endif
+
 	return *this;
 }
 
@@ -104,23 +83,13 @@ SQLiteDB SQLiteDB::Open(const string &path, const SQLiteOpenOptions &options, bo
 }
 
 SQLiteDB SQLiteDB::Open(const string &path, const SQLiteOpenOptions &options, ClientContext &context, bool is_shared) {
-#ifdef _WIN32
-	fprintf(stderr, "[SQLITE_DB_DEBUG] SQLiteDB::Open called with path: %s\n", path.c_str());
-	fprintf(stderr, "[SQLITE_DB_DEBUG] IsRemoteFile: %s\n", FileSystem::IsRemoteFile(path) ? "true" : "false");
-	fflush(stderr);
-#endif
+
 	// Remote SQLite databases are accessed through our custom VFS
 	// which uses DuckDB's CachingFileSystem for efficient block caching
 	if (FileSystem::IsRemoteFile(path)) {
-#ifdef _WIN32
-		fprintf(stderr, "[SQLITE_DB_DEBUG] Remote file detected, checking VFS support\n");
-		fflush(stderr);
-#endif
+
 		if (SQLiteDuckDBCacheVFS::CanHandlePath(context, path)) {
-#ifdef _WIN32
-			fprintf(stderr, "[SQLITE_DB_DEBUG] VFS can handle path, registering VFS\n");
-			fflush(stderr);
-#endif
+
 			// Register our VFS to handle this remote file
 			SQLiteDuckDBCacheVFS::Register(context);
 			SQLiteDB result;
@@ -133,14 +102,7 @@ SQLiteDB SQLiteDB::Open(const string &path, const SQLiteOpenOptions &options, Cl
 			flags |= SQLITE_OPEN_EXRESCODE;
 			
 			auto rc = sqlite3_open_v2(path.c_str(), &result.db, flags, SQLiteDuckDBCacheVFS::GetVFSNameForContext(context));
-#ifdef _WIN32
-			fprintf(stderr, "[SQLITE_DB_DEBUG] sqlite3_open_v2 returned: %d (SQLITE_OK=%d)\n", rc, SQLITE_OK);
-			if (rc == SQLITE_OK) {
-				fprintf(stderr, "[SQLITE_DB_DEBUG] Successfully opened remote database, db pointer: %p\n", (void*)result.db);
-				fprintf(stderr, "[SQLITE_DB_DEBUG] result object address: %p\n", (void*)&result);
-			}
-			fflush(stderr);
-#endif
+
 			if (rc != SQLITE_OK) {
 				// SQLite failed to open the file. Try opening it directly with
 				// DuckDB's filesystem to get a more specific error message.
@@ -173,10 +135,7 @@ SQLiteDB SQLiteDB::Open(const string &path, const SQLiteOpenOptions &options, Cl
 				}
 			}
 			
-#ifdef _WIN32
-			fprintf(stderr, "[SQLITE_DB_DEBUG] About to return SQLiteDB object with db=%p\n", (void*)result.db);
-			fflush(stderr);
-#endif
+
 			return result;
 		} else {
 			// Path not supported by our VFS - use standard SQLite
@@ -189,11 +148,7 @@ SQLiteDB SQLiteDB::Open(const string &path, const SQLiteOpenOptions &options, Cl
 }
 
 bool SQLiteDB::TryPrepare(const string &query, SQLiteStatement &stmt) {
-#ifdef _WIN32
-	fprintf(stderr, "[SQLITE_DB_DEBUG] TryPrepare called with query: %s\n", query.c_str());
-	fprintf(stderr, "[SQLITE_DB_DEBUG] db pointer: %p\n", (void*)db);
-	fflush(stderr);
-#endif
+
 	if (!db) {
 		throw InternalException("SQLiteDB::TryPrepare called with null database pointer");
 	}
@@ -202,13 +157,7 @@ bool SQLiteDB::TryPrepare(const string &query, SQLiteStatement &stmt) {
 		Printer::Print(query + "\n");
 	}
 	auto rc = sqlite3_prepare_v2(db, query.c_str(), -1, &stmt.stmt, nullptr);
-#ifdef _WIN32
-	fprintf(stderr, "[SQLITE_DB_DEBUG] sqlite3_prepare_v2 returned: %d\n", rc);
-	if (rc != SQLITE_OK) {
-		fprintf(stderr, "[SQLITE_DB_DEBUG] Error message: %s\n", sqlite3_errmsg(db));
-	}
-	fflush(stderr);
-#endif
+
 	if (rc != SQLITE_OK) {
 		return false;
 	}
@@ -238,30 +187,18 @@ bool SQLiteDB::IsOpen() {
 }
 
 void SQLiteDB::Close() {
-#ifdef _WIN32
-	fprintf(stderr, "[SQLITE_DB_DEBUG] Close() called, this=%p, db=%p\n", (void*)this, (void*)db);
-	fflush(stderr);
-#endif
+
 	if (!IsOpen()) {
-#ifdef _WIN32
-		fprintf(stderr, "[SQLITE_DB_DEBUG] Close() - database already closed\n");
-		fflush(stderr);
-#endif
+
 		return;
 	}
 	auto rc = sqlite3_close_v2(db);
-#ifdef _WIN32
-	fprintf(stderr, "[SQLITE_DB_DEBUG] sqlite3_close_v2 returned: %d\n", rc);
-	fflush(stderr);
-#endif
+
 	if (rc == SQLITE_BUSY) {
 		throw InternalException("Failed to close database - SQLITE_BUSY");
 	}
 	db = nullptr;
-#ifdef _WIN32
-	fprintf(stderr, "[SQLITE_DB_DEBUG] Close() finished, db set to nullptr\n");
-	fflush(stderr);
-#endif
+
 }
 
 vector<string> SQLiteDB::GetEntries(string entry_type) {

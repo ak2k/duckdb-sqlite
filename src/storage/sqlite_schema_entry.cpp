@@ -17,10 +17,7 @@
 namespace duckdb {
 
 SQLiteSchemaEntry::SQLiteSchemaEntry(Catalog &catalog, CreateSchemaInfo &info) : SchemaCatalogEntry(catalog, info) {
-#ifdef _WIN32
-	fprintf(stderr, "[SQLITE_SCHEMA_DEBUG] SQLiteSchemaEntry constructor called\n");
-	fflush(stderr);
-#endif
+
 }
 
 SQLiteTransaction &GetSQLiteTransaction(CatalogTransaction transaction, Catalog &catalog) {
