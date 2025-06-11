@@ -3,6 +3,7 @@
 # group: [sqlite_scanner]
 
 require sqlite_scanner
+require skip_reload
 
 statement ok
 INSTALL httpfs;
