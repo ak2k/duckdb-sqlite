@@ -5,24 +5,61 @@
 namespace duckdb {
 
 SQLiteStatement::SQLiteStatement() : db(nullptr), stmt(nullptr) {
+#ifdef _WIN32
+	fprintf(stderr, "[SQLITE_STMT_DEBUG] Default constructor called, this=%p\n", (void*)this);
+	fflush(stderr);
+#endif
 }
 
 SQLiteStatement::SQLiteStatement(sqlite3 *db, sqlite3_stmt *stmt) : db(db), stmt(stmt) {
 	D_ASSERT(db);
+#ifdef _WIN32
+	fprintf(stderr, "[SQLITE_STMT_DEBUG] Constructor called, this=%p, db=%p, stmt=%p\n", 
+	        (void*)this, (void*)db, (void*)stmt);
+	fflush(stderr);
+#endif
 }
 
 SQLiteStatement::~SQLiteStatement() {
+#ifdef _WIN32
+	fprintf(stderr, "[SQLITE_STMT_DEBUG] Destructor called, this=%p, db=%p, stmt=%p\n", 
+	        (void*)this, (void*)db, (void*)stmt);
+	fflush(stderr);
+#endif
 	Close();
 }
 
-SQLiteStatement::SQLiteStatement(SQLiteStatement &&other) noexcept {
+SQLiteStatement::SQLiteStatement(SQLiteStatement &&other) noexcept : db(nullptr), stmt(nullptr) {
+#ifdef _WIN32
+	fprintf(stderr, "[SQLITE_STMT_DEBUG] Move constructor called, other.db=%p, other.stmt=%p\n", 
+	        (void*)other.db, (void*)other.stmt);
+	fflush(stderr);
+#endif
 	std::swap(db, other.db);
 	std::swap(stmt, other.stmt);
+#ifdef _WIN32
+	fprintf(stderr, "[SQLITE_STMT_DEBUG] After move constructor, this->db=%p, this->stmt=%p\n", 
+	        (void*)db, (void*)stmt);
+	fflush(stderr);
+#endif
 }
 
 SQLiteStatement &SQLiteStatement::operator=(SQLiteStatement &&other) noexcept {
-	std::swap(db, other.db);
-	std::swap(stmt, other.stmt);
+#ifdef _WIN32
+	fprintf(stderr, "[SQLITE_STMT_DEBUG] Move assignment called, other.db=%p, other.stmt=%p\n", 
+	        (void*)other.db, (void*)other.stmt);
+	fflush(stderr);
+#endif
+	if (this != &other) {
+		Close();
+		std::swap(db, other.db);
+		std::swap(stmt, other.stmt);
+	}
+#ifdef _WIN32
+	fprintf(stderr, "[SQLITE_STMT_DEBUG] After move assignment, this->db=%p, this->stmt=%p\n", 
+	        (void*)db, (void*)stmt);
+	fflush(stderr);
+#endif
 	return *this;
 }
 
@@ -58,12 +95,29 @@ bool SQLiteStatement::IsOpen() {
 }
 
 void SQLiteStatement::Close() {
+#ifdef _WIN32
+	fprintf(stderr, "[SQLITE_STMT_DEBUG] Close() called, this=%p, db=%p, stmt=%p\n", 
+	        (void*)this, (void*)db, (void*)stmt);
+	fflush(stderr);
+#endif
 	if (!IsOpen()) {
+#ifdef _WIN32
+		fprintf(stderr, "[SQLITE_STMT_DEBUG] Close() - statement already closed\n");
+		fflush(stderr);
+#endif
 		return;
 	}
-	sqlite3_finalize(stmt);
+	auto rc = sqlite3_finalize(stmt);
+#ifdef _WIN32
+	fprintf(stderr, "[SQLITE_STMT_DEBUG] sqlite3_finalize returned: %d\n", rc);
+	fflush(stderr);
+#endif
 	db = nullptr;
 	stmt = nullptr;
+#ifdef _WIN32
+	fprintf(stderr, "[SQLITE_STMT_DEBUG] Close() finished\n");
+	fflush(stderr);
+#endif
 }
 
 void SQLiteStatement::CheckTypeMatches(const SqliteBindData &bind_data, sqlite3_value *val, int sqlite_column_type,

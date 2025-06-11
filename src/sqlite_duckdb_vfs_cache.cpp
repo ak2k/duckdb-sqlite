@@ -182,8 +182,17 @@ void DuckDBCachedFile::EnsureInitialized() {
 
 
 int DuckDBCachedFile::Read(void *buffer, int amount, sqlite3_int64 offset) {
+#ifdef _WIN32
+	fprintf(stderr, "[SQLITE_VFS_DEBUG] DuckDBCachedFile::Read called, amount=%d, offset=%lld\n", 
+	        amount, (long long)offset);
+	fflush(stderr);
+#endif
 	// Early return for empty reads (SQLite sometimes requests 0 bytes)
 	if (!buffer || amount <= 0) {
+#ifdef _WIN32
+		fprintf(stderr, "[SQLITE_VFS_DEBUG] Early return for empty read\n");
+		fflush(stderr);
+#endif
 		return SQLITE_OK;
 	}
 	
@@ -191,11 +200,19 @@ int DuckDBCachedFile::Read(void *buffer, int amount, sqlite3_int64 offset) {
 	try {
 		EnsureInitialized();
 	} catch (...) {
+#ifdef _WIN32
+		fprintf(stderr, "[SQLITE_VFS_DEBUG] EnsureInitialized threw exception\n");
+		fflush(stderr);
+#endif
 		return SQLITE_IOERR_READ;
 	}
 	
 	// Safety check - should never happen in normal operation
 	if (!caching_handle) {
+#ifdef _WIN32
+		fprintf(stderr, "[SQLITE_VFS_DEBUG] No caching_handle available\n");
+		fflush(stderr);
+#endif
 		return SQLITE_IOERR_READ;
 	}
 
@@ -212,19 +229,37 @@ int DuckDBCachedFile::Read(void *buffer, int amount, sqlite3_int64 offset) {
 		int64_t remaining = cached_file_size - offset;
 		read_ahead_size = (std::min)(read_ahead_size, remaining);
 		
+#ifdef _WIN32
+		fprintf(stderr, "[SQLITE_VFS_DEBUG] Read-ahead size: %lld bytes, file_size: %lld\n", 
+		        (long long)read_ahead_size, (long long)cached_file_size);
+		fflush(stderr);
+#endif
+		
 		// Read the larger block to populate DuckDB's cache
 		data_ptr_t read_buffer = nullptr;
 		auto buffer_handle = caching_handle->Read(read_buffer, read_ahead_size, offset);
 		
 		// Safety check - CachingFileSystem should always return a valid buffer
 		if (!read_buffer) {
+#ifdef _WIN32
+			fprintf(stderr, "[SQLITE_VFS_DEBUG] CachingFileSystem returned null buffer\n");
+			fflush(stderr);
+#endif
 			return SQLITE_IOERR_READ;
 		}
 		
 		// Copy only the requested amount to the output buffer
 		memcpy(buffer, read_buffer, amount);
+#ifdef _WIN32
+		fprintf(stderr, "[SQLITE_VFS_DEBUG] Read successful, copied %d bytes\n", amount);
+		fflush(stderr);
+#endif
 		return SQLITE_OK;
 	} catch (...) {
+#ifdef _WIN32
+		fprintf(stderr, "[SQLITE_VFS_DEBUG] Exception caught in Read\n");
+		fflush(stderr);
+#endif
 		// Map all exceptions to SQLite I/O errors.
 		// DuckDB will have already logged the actual error details.
 		return SQLITE_IOERR_READ;
@@ -534,40 +569,90 @@ int SQLiteDuckDBCacheVFS::GetLastError(sqlite3_vfs *vfs, int bytes, char *err_ms
 //===--------------------------------------------------------------------===//
 
 int SQLiteDuckDBCacheVFS::Close(sqlite3_file *file) {
+#ifdef _WIN32
+	fprintf(stderr, "[SQLITE_VFS_DEBUG] Close() called, file=%p\n", (void*)file);
+	fflush(stderr);
+#endif
 	if (file) {
 		auto *duckdb_file = reinterpret_cast<SQLiteDuckDBCachedFile*>(file);
+#ifdef _WIN32
+		fprintf(stderr, "[SQLITE_VFS_DEBUG] Resetting duckdb_file handle\n");
+		fflush(stderr);
+#endif
 		duckdb_file->duckdb_file.reset();
 	}
+#ifdef _WIN32
+	fprintf(stderr, "[SQLITE_VFS_DEBUG] Close() completed\n");
+	fflush(stderr);
+#endif
 	return SQLITE_OK;
 }
 
 int SQLiteDuckDBCacheVFS::Read(sqlite3_file *file, void *buffer, int amount, sqlite3_int64 offset) {
+#ifdef _WIN32
+	fprintf(stderr, "[SQLITE_VFS_DEBUG] Read() called, file=%p, amount=%d, offset=%lld\n", 
+	        (void*)file, amount, (long long)offset);
+	fflush(stderr);
+#endif
 	if (!file || !buffer) {
+#ifdef _WIN32
+		fprintf(stderr, "[SQLITE_VFS_DEBUG] Read() failed - null file or buffer\n");
+		fflush(stderr);
+#endif
 		return SQLITE_IOERR_READ;
 	}
 
 	auto *duckdb_file = reinterpret_cast<SQLiteDuckDBCachedFile*>(file);
 	if (!duckdb_file->duckdb_file) {
+#ifdef _WIN32
+		fprintf(stderr, "[SQLITE_VFS_DEBUG] Read() failed - no duckdb_file handle\n");
+		fflush(stderr);
+#endif
 		return SQLITE_IOERR_READ;
 	}
 
-	return duckdb_file->duckdb_file->Read(buffer, amount, offset);
+	int result = duckdb_file->duckdb_file->Read(buffer, amount, offset);
+#ifdef _WIN32
+	fprintf(stderr, "[SQLITE_VFS_DEBUG] Read() completed with result: %d\n", result);
+	fflush(stderr);
+#endif
+	return result;
 }
 
 int SQLiteDuckDBCacheVFS::FileSize(sqlite3_file *file, sqlite3_int64 *size) {
+#ifdef _WIN32
+	fprintf(stderr, "[SQLITE_VFS_DEBUG] FileSize() called, file=%p\n", (void*)file);
+	fflush(stderr);
+#endif
 	if (!file || !size) {
+#ifdef _WIN32
+		fprintf(stderr, "[SQLITE_VFS_DEBUG] FileSize() failed - null parameters\n");
+		fflush(stderr);
+#endif
 		return SQLITE_IOERR;
 	}
 
 	auto *duckdb_file = reinterpret_cast<SQLiteDuckDBCachedFile*>(file);
 	if (!duckdb_file->duckdb_file) {
+#ifdef _WIN32
+		fprintf(stderr, "[SQLITE_VFS_DEBUG] FileSize() failed - no duckdb_file handle\n");
+		fflush(stderr);
+#endif
 		return SQLITE_IOERR;
 	}
 
 	try {
 		*size = duckdb_file->duckdb_file->GetFileSize();
+#ifdef _WIN32
+		fprintf(stderr, "[SQLITE_VFS_DEBUG] FileSize() returned: %lld\n", (long long)*size);
+		fflush(stderr);
+#endif
 		return SQLITE_OK;
 	} catch (...) {
+#ifdef _WIN32
+		fprintf(stderr, "[SQLITE_VFS_DEBUG] FileSize() threw exception\n");
+		fflush(stderr);
+#endif
 		return SQLITE_IOERR;
 	}
 }
