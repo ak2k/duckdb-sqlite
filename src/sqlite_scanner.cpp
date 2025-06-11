@@ -454,32 +454,16 @@ SqliteStatistics(ClientContext &context, const FunctionData *bind_data_p,
 */
 
 SqliteScanFunction::SqliteScanFunction()
-    : TableFunction() {
+    : TableFunction("sqlite_scan", {LogicalType::VARCHAR, LogicalType::VARCHAR}, SqliteScan, SqliteBind,
+                    SqliteInitGlobalState, SqliteInitLocalState) {
 #ifdef _WIN32
 	fprintf(stderr, "[SQLITE_SCAN_DEBUG] SqliteScanFunction constructor called at %p\n", (void*)this);
 	fflush(stderr);
 #endif
-	// Initialize members after construction to avoid static initialization issues
-	name = "sqlite_scan";
-	arguments.push_back(LogicalType::VARCHAR);
-	arguments.push_back(LogicalType::VARCHAR);
-	function = SqliteScan;
-	bind = SqliteBind;
-	init_global = SqliteInitGlobalState;
-	init_local = SqliteInitLocalState;
 	cardinality = SqliteCardinality;
 	to_string = SqliteToString;
 	get_bind_info = SqliteBindInfo;
 	projection_pushdown = true;
-	// Explicitly set serialization-related members to avoid Windows debug assertion
-	serialize = nullptr;
-	deserialize = nullptr;
-	verify_serialization = false;
-	// Initialize other flags to their defaults
-	filter_pushdown = false;
-	filter_prune = false;
-	sampling_pushdown = false;
-	late_materialization = false;
 #ifdef _WIN32
 	fprintf(stderr, "[SQLITE_SCAN_DEBUG] Function name: %s\n", name.c_str());
 	fprintf(stderr, "[SQLITE_SCAN_DEBUG] Number of parameters: %zu\n", arguments.size());
@@ -571,17 +555,8 @@ static void AttachFunction(ClientContext &context, TableFunctionInput &data_p, D
 }
 
 SqliteAttachFunction::SqliteAttachFunction()
-    : TableFunction() {
-	// Initialize members after construction to avoid static initialization issues
-	name = "sqlite_attach";
-	arguments.push_back(LogicalType::VARCHAR);
-	function = AttachFunction;
-	bind = AttachBind;
+    : TableFunction("sqlite_attach", {LogicalType::VARCHAR}, AttachFunction, AttachBind) {
 	named_parameters["overwrite"] = LogicalType::BOOLEAN;
-	// Explicitly set serialization-related members to avoid Windows debug assertion
-	serialize = nullptr;
-	deserialize = nullptr;
-	verify_serialization = false;
 }
 
 // SqliteBindData method implementations
