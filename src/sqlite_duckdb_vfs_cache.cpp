@@ -297,7 +297,8 @@ void SQLiteDuckDBCacheVFS::Register(ClientContext &context) {
 	registry_data.registry[&context] = std::move(wrapper);
 }
 
-// New method to unregister VFS when context is destroyed
+// Unregister the VFS associated with a ClientContext when it's being destroyed.
+// This ensures proper cleanup of VFS resources.
 void SQLiteDuckDBCacheVFS::Unregister(ClientContext &context) {
 	auto& registry_data = GetVFSRegistryData();
 	lock_guard<mutex> lock(registry_data.registry_mutex);
@@ -311,7 +312,8 @@ void SQLiteDuckDBCacheVFS::Unregister(ClientContext &context) {
 	}
 }
 
-// New method to get VFS name for a context
+// Get the unique VFS name associated with a specific ClientContext.
+// Returns the default VFS name if no specific VFS is registered for this context.
 const char *SQLiteDuckDBCacheVFS::GetVFSNameForContext(ClientContext &context) {
 	auto& registry_data = GetVFSRegistryData();
 	lock_guard<mutex> lock(registry_data.registry_mutex);
