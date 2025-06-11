@@ -106,7 +106,8 @@ void SQLiteDB::HandleOpenError(const string &path, int rc, ClientContext *contex
 	}
 }
 
-SQLiteDB SQLiteDB::Open(const string &path, const SQLiteOpenOptions &options, bool is_shared) {
+// Opens a local SQLite database file using standard SQLite file handling
+SQLiteDB SQLiteDB::OpenLocal(const string &path, const SQLiteOpenOptions &options, bool is_shared) {
 	SQLiteDB result;
 	int flags = GetOpenFlags(options, is_shared, false);
 	
@@ -123,6 +124,7 @@ SQLiteDB SQLiteDB::Open(const string &path, const SQLiteOpenOptions &options, bo
 	return result;
 }
 
+// Opens a remote SQLite database using DuckDB's custom VFS for HTTP/HTTPS support
 SQLiteDB SQLiteDB::OpenWithVFS(const string &path, const SQLiteOpenOptions &options, ClientContext &context, bool is_shared) {
 	// Register our VFS to handle this remote file
 	SQLiteDuckDBCacheVFS::Register(context);
@@ -143,19 +145,19 @@ SQLiteDB SQLiteDB::OpenWithVFS(const string &path, const SQLiteOpenOptions &opti
 	return result;
 }
 
+// Main entry point for opening SQLite databases - handles both local and remote files
+// Remote files (HTTP/HTTPS) use DuckDB's VFS with caching, local files use standard SQLite
 SQLiteDB SQLiteDB::Open(const string &path, const SQLiteOpenOptions &options, ClientContext &context, bool is_shared) {
-	// Remote SQLite databases are accessed through our custom VFS
-	// which uses DuckDB's CachingFileSystem for efficient block caching
 	if (FileSystem::IsRemoteFile(path)) {
 		if (SQLiteDuckDBCacheVFS::CanHandlePath(context, path)) {
 			return OpenWithVFS(path, options, context, is_shared);
 		} else {
 			// Path not supported by our VFS - use standard SQLite
-			return Open(path, options, is_shared);
+			return OpenLocal(path, options, is_shared);
 		}
 	} else {
 		// Local files use standard SQLite file handling
-		return Open(path, options, is_shared);
+		return OpenLocal(path, options, is_shared);
 	}
 }
 

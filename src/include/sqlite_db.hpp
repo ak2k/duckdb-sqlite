@@ -31,7 +31,8 @@ public:
 	sqlite3 *db;
 
 public:
-	static SQLiteDB Open(const string &path, const SQLiteOpenOptions &options, bool is_shared = false);
+	//! Open a SQLite database with support for both local and remote files (HTTP/HTTPS)
+	//! @param context Required for remote file access via DuckDB's VFS
 	static SQLiteDB Open(const string &path, const SQLiteOpenOptions &options, ClientContext &context, bool is_shared = false);
 	bool TryPrepare(const string &query, SQLiteStatement &result);
 	SQLiteStatement Prepare(const string &query);
@@ -62,6 +63,8 @@ private:
 	static void ApplyBusyTimeout(sqlite3 *db, const SQLiteOpenOptions &options);
 	static void HandleOpenError(const string &path, int rc, ClientContext *context = nullptr);
 	static SQLiteDB OpenWithVFS(const string &path, const SQLiteOpenOptions &options, ClientContext &context, bool is_shared);
+	//! Open a local SQLite database file (no remote support)
+	static SQLiteDB OpenLocal(const string &path, const SQLiteOpenOptions &options, bool is_shared = false);
 };
 
 } // namespace duckdb
