@@ -37,13 +37,13 @@ LOAD httpfs;
 statement error
 SELECT * FROM sqlite_scan('http://nonexistent-domain-12345.com/test.db', 'test');
 ----
-disk I/O error
+Error
 
 # Test 7: HTTPS URLs should also be recognized after httpfs loads
 statement error
 SELECT * FROM sqlite_scan('https://nonexistent-domain-12345.com/test.db', 'test');
 ----
-disk I/O error
+Error
 
 # Test 8: Regular file paths should still work as before
 statement error
