@@ -41,23 +41,20 @@ private:
 	ClientContext &context;
 	string path;
 	unique_ptr<CachingFileHandle> caching_handle;
-	unique_ptr<FileHandle> base_handle;  // Unused - kept for potential future use
 	sqlite3_int64 cached_file_size;  // Cached to avoid repeated remote calls
 	bool initialized = false;
 	
-	// The following members are reserved for future adaptive read-ahead implementation.
-	// Currently, DuckDB's CachingFileSystem handles all caching automatically.
-	mutable mutex readahead_mutex;
-	sqlite3_int64 last_read_offset;
-	sqlite3_int64 last_read_end;
-	uint64_t current_readahead_size;
+	// Adaptive read-ahead state (no mutex needed - SQLite ensures single-threaded access per file handle)
+	sqlite3_int64 last_read_offset;     // Track last read position
+	sqlite3_int64 last_read_end;        // End of last read (offset + amount)
+	uint64_t current_readahead_size;    // Current read-ahead block size
 	
-	// Read-ahead size constants (not currently used)
+	// Adaptive read-ahead constants
 	static constexpr uint64_t MIN_READAHEAD_SIZE = static_cast<uint64_t>(1024) * 1024;       // 1MB
 	static constexpr uint64_t MAX_READAHEAD_SIZE = static_cast<uint64_t>(128) * 1024 * 1024; // 128MB
-	static constexpr uint64_t SEQUENTIAL_THRESHOLD = static_cast<uint64_t>(64) * 1024;       // 64KB
+	static constexpr uint64_t SEQUENTIAL_THRESHOLD = static_cast<uint64_t>(64) * 1024;       // 64KB gap tolerance
 	
-	// Future read-ahead methods (not implemented)
+	// Helper methods for adaptive read-ahead
 	uint64_t CalculateReadAheadSize(sqlite3_int64 offset, int amount) const;
 	bool IsSequentialRead(sqlite3_int64 offset) const;
 	void UpdateReadAheadState(sqlite3_int64 offset, int amount);

@@ -113,7 +113,8 @@ static string GetUniqueVFSName(ClientContext *context) {
 //===--------------------------------------------------------------------===//
 
 DuckDBCachedFile::DuckDBCachedFile(ClientContext &context, const string &path) 
-    : context(context), path(path), cached_file_size(-1), initialized(false) {
+    : context(context), path(path), cached_file_size(-1), initialized(false),
+      last_read_offset(-1), last_read_end(-1), current_readahead_size(MIN_READAHEAD_SIZE) {
 	// Defer actual file opening until first use to avoid doing DuckDB operations
 	// during SQLite VFS callbacks, which might be in a different serialization context
 }
@@ -185,29 +186,32 @@ int DuckDBCachedFile::Read(void *buffer, int amount, sqlite3_int64 offset) {
 	}
 
 	try {
-		// Read-ahead optimization: SQLite typically reads in 4KB pages, but
-		// DuckDB's CachingFileSystem works better with larger blocks.
-		// We'll read at least 1MB to populate the cache.
-		static constexpr int64_t MIN_READ_SIZE = static_cast<int64_t>(1024) * 1024; // 1MB
+		// Calculate optimal read-ahead size based on access pattern
+		uint64_t readahead_size = CalculateReadAheadSize(offset, amount);
 		
-		// Calculate the read-ahead size
-		int64_t read_ahead_size = (std::max)(static_cast<int64_t>(amount), MIN_READ_SIZE);
+		// Ensure we read at least the requested amount
+		uint64_t actual_read_size = std::max(static_cast<uint64_t>(amount), readahead_size);
 		
-		// Make sure we don't read past the end of the file
-		int64_t remaining = cached_file_size - offset;
-		read_ahead_size = (std::min)(read_ahead_size, remaining);
+		// Don't read beyond file end
+		if (offset + static_cast<sqlite3_int64>(actual_read_size) > cached_file_size) {
+			actual_read_size = static_cast<uint64_t>(cached_file_size - offset);
+		}
 		
-		// Read the larger block to populate DuckDB's cache
+		// Use DuckDB's CachingFileSystem with adaptive read-ahead
 		data_ptr_t read_buffer = nullptr;
-		auto buffer_handle = caching_handle->Read(read_buffer, read_ahead_size, offset);
+		auto buffer_handle = caching_handle->Read(read_buffer, actual_read_size, offset);
 		
-		// Safety check - CachingFileSystem should always return a valid buffer
+		// Validate read buffer before copying
 		if (!read_buffer) {
 			return SQLITE_IOERR_READ;
 		}
 		
-		// Copy only the requested amount to the output buffer
+		// Copy only the requested amount to user buffer
 		memcpy(buffer, read_buffer, amount);
+		
+		// Update read-ahead state after successful read
+		UpdateReadAheadState(offset, amount);
+		
 		return SQLITE_OK;
 	} catch (...) {
 		// Map all exceptions to SQLite I/O errors.
@@ -223,6 +227,40 @@ sqlite3_int64 DuckDBCachedFile::GetFileSize() {
 		return -1;
 	}
 	return cached_file_size;
+}
+
+uint64_t DuckDBCachedFile::CalculateReadAheadSize(sqlite3_int64 offset, int amount) const {
+	// First read or non-sequential access - use minimum size
+	if (last_read_offset == -1 || !IsSequentialRead(offset)) {
+		return MIN_READAHEAD_SIZE;
+	}
+	
+	// Sequential read - double the current size up to maximum
+	uint64_t next_size = current_readahead_size * 2;
+	return std::min(next_size, MAX_READAHEAD_SIZE);
+}
+
+bool DuckDBCachedFile::IsSequentialRead(sqlite3_int64 offset) const {
+	// Consider sequential if:
+	// 1. Reading from exactly where last read ended, OR
+	// 2. Reading within SEQUENTIAL_THRESHOLD of where last read ended
+	return (offset >= last_read_end) && 
+	       (offset <= last_read_end + static_cast<sqlite3_int64>(SEQUENTIAL_THRESHOLD));
+}
+
+void DuckDBCachedFile::UpdateReadAheadState(sqlite3_int64 offset, int amount) {
+	// Update read-ahead size based on access pattern
+	if (IsSequentialRead(offset)) {
+		// Sequential read - grow read-ahead size
+		current_readahead_size = std::min(current_readahead_size * 2, MAX_READAHEAD_SIZE);
+	} else {
+		// Non-sequential read - reset to minimum
+		current_readahead_size = MIN_READAHEAD_SIZE;
+	}
+	
+	// Update position tracking
+	last_read_offset = offset;
+	last_read_end = offset + amount;
 }
 
 
