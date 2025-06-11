@@ -484,6 +484,23 @@ struct AttachFunctionData : public TableFunctionData {
 	bool finished = false;
 	bool overwrite = false;
 	string file_name = "";
+
+	// Override virtual methods from FunctionData
+	unique_ptr<FunctionData> Copy() const override {
+		auto result = make_uniq<AttachFunctionData>();
+		result->finished = finished;
+		result->overwrite = overwrite;
+		result->file_name = file_name;
+		result->column_ids = column_ids;
+		return std::move(result);
+	}
+
+	bool Equals(const FunctionData &other) const override {
+		auto &other_attach = other.Cast<AttachFunctionData>();
+		return finished == other_attach.finished &&
+		       overwrite == other_attach.overwrite &&
+		       file_name == other_attach.file_name;
+	}
 };
 
 static unique_ptr<FunctionData> AttachBind(ClientContext &context, TableFunctionBindInput &input,
@@ -542,6 +559,49 @@ SqliteAttachFunction::SqliteAttachFunction()
 	serialize = nullptr;
 	deserialize = nullptr;
 	verify_serialization = false;
+}
+
+// SqliteBindData method implementations
+unique_ptr<FunctionData> SqliteBindData::Copy() const {
+	auto result = make_uniq<SqliteBindData>();
+	result->file_name = file_name;
+	result->table_name = table_name;
+	result->names = names;
+	result->types = types;
+	result->sql = sql;
+	result->row_id_info = row_id_info;
+	result->all_varchar = all_varchar;
+	result->rows_per_group = rows_per_group;
+	result->global_db = global_db;
+	result->table = table;
+	// Copy the column_ids from the base class
+	result->column_ids = column_ids;
+	return std::move(result);
+}
+
+bool SqliteBindData::Equals(const FunctionData &other) const {
+	auto &other_bind = other.Cast<SqliteBindData>();
+	if (file_name != other_bind.file_name) {
+		return false;
+	}
+	if (table_name != other_bind.table_name) {
+		return false;
+	}
+	if (sql != other_bind.sql) {
+		return false;
+	}
+	if (all_varchar != other_bind.all_varchar) {
+		return false;
+	}
+	if (rows_per_group != other_bind.rows_per_group) {
+		return false;
+	}
+	if (global_db != other_bind.global_db) {
+		return false;
+	}
+	// We don't compare names, types, row_id_info, table, or column_ids
+	// as these are derived from the other fields
+	return true;
 }
 
 } // namespace duckdb

@@ -30,6 +30,10 @@ struct SqliteBindData : public TableFunctionData {
 	SQLiteDB *global_db;
 
 	optional_ptr<TableCatalogEntry> table;
+
+	// Override virtual methods from FunctionData
+	unique_ptr<FunctionData> Copy() const override;
+	bool Equals(const FunctionData &other) const override;
 };
 
 class SqliteScanFunction : public TableFunction {
