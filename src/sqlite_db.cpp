@@ -52,6 +52,7 @@ int SQLiteDB::GetOpenFlags(const SQLiteOpenOptions &options, bool is_shared, boo
 	int flags = SQLITE_OPEN_PRIVATECACHE;
 	
 	if (is_remote || options.access_mode == AccessMode::READ_ONLY) {
+		// Remote databases are always read-only
 		flags |= SQLITE_OPEN_READONLY;
 	} else {
 		flags |= SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE;
@@ -85,11 +86,12 @@ void SQLiteDB::HandleOpenError(const string &path, int rc, ClientContext *contex
 	// If we have a context, try to get a more specific error message
 	if (context) {
 		try {
+			// Attempt to open the file through DuckDB's filesystem to get better error messages.
 			auto &fs = context->db->GetFileSystem();
 			auto file_handle = fs.OpenFile(path, FileFlags::FILE_FLAGS_READ);
 		} catch (const HTTPException &e) {
-			// Re-throw HTTP errors with their original message
-			throw HTTPException(e.what());
+			// Re-throw HTTP errors with their original context
+			throw;
 		} catch (const Exception &e) {
 			// Re-throw other DuckDB exceptions as-is
 			throw;
@@ -139,9 +141,6 @@ SQLiteDB SQLiteDB::OpenWithVFS(const string &path, const SQLiteOpenOptions &opti
 	
 	ApplyBusyTimeout(result.db, options);
 	
-	// Note: journal_mode is not supported for remote databases
-	// Remote databases are always read-only
-	
 	return result;
 }
 
@@ -161,11 +160,14 @@ SQLiteDB SQLiteDB::Open(const string &path, const SQLiteOpenOptions &options, Cl
 	}
 }
 
-bool SQLiteDB::TryPrepare(const string &query, SQLiteStatement &stmt) {
-
+void SQLiteDB::CheckDBValid(sqlite3 *db) {
 	if (!db) {
-		throw InternalException("SQLiteDB::TryPrepare called with null database pointer");
+		throw InternalException("SQLite database operation called with null database pointer");
 	}
+}
+
+bool SQLiteDB::TryPrepare(const string &query, SQLiteStatement &stmt) {
+	CheckDBValid(db);
 	stmt.db = db;
 	if (debug_sqlite_print_queries) {
 		Printer::Print(query + "\n");
@@ -187,6 +189,7 @@ SQLiteStatement SQLiteDB::Prepare(const string &query) {
 }
 
 void SQLiteDB::Execute(const string &query) {
+	CheckDBValid(db);
 	if (debug_sqlite_print_queries) {
 		Printer::Print(query + "\n");
 	}
