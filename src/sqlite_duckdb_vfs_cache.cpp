@@ -63,7 +63,7 @@ struct DuckDBVFSWrapper {
 // Global registry of VFS wrappers to manage their lifetime
 // Use function-local statics to ensure proper initialization order on Windows
 struct VFSRegistryData {
-	mutex mutex;
+	mutex registry_mutex;
 	unordered_map<ClientContext*, unique_ptr<DuckDBVFSWrapper>> registry;
 };
 
@@ -235,7 +235,7 @@ bool SQLiteDuckDBCacheVFS::CanHandlePath(ClientContext &context, const string &p
 
 void SQLiteDuckDBCacheVFS::Register(ClientContext &context) {
 	auto& registry_data = GetVFSRegistryData();
-	lock_guard<mutex> lock(registry_data.mutex);
+	lock_guard<mutex> lock(registry_data.registry_mutex);
 	
 	// Check if this context already has a VFS registered
 	auto it = registry_data.registry.find(&context);
@@ -300,7 +300,7 @@ void SQLiteDuckDBCacheVFS::Register(ClientContext &context) {
 // New method to unregister VFS when context is destroyed
 void SQLiteDuckDBCacheVFS::Unregister(ClientContext &context) {
 	auto& registry_data = GetVFSRegistryData();
-	lock_guard<mutex> lock(registry_data.mutex);
+	lock_guard<mutex> lock(registry_data.registry_mutex);
 	
 	auto it = registry_data.registry.find(&context);
 	if (it != registry_data.registry.end()) {
@@ -314,7 +314,7 @@ void SQLiteDuckDBCacheVFS::Unregister(ClientContext &context) {
 // New method to get VFS name for a context
 const char *SQLiteDuckDBCacheVFS::GetVFSNameForContext(ClientContext &context) {
 	auto& registry_data = GetVFSRegistryData();
-	lock_guard<mutex> lock(registry_data.mutex);
+	lock_guard<mutex> lock(registry_data.registry_mutex);
 	
 	auto it = registry_data.registry.find(&context);
 	if (it != registry_data.registry.end() && it->second->vfs_name) {
