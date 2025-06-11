@@ -5,8 +5,9 @@
 #include "duckdb/common/exception.hpp"
 #include "duckdb/common/exception/http_exception.hpp"
 #include "duckdb/storage/buffer_manager.hpp"
+#include "duckdb/common/unordered_map.hpp"
+#include "duckdb/common/mutex.hpp"
 #include <cstring>
-#include <unordered_map>
 
 namespace duckdb {
 
@@ -62,8 +63,8 @@ struct DuckDBVFSWrapper {
 // Global registry of VFS wrappers to manage their lifetime
 // Use function-local statics to ensure proper initialization order on Windows
 struct VFSRegistryData {
-	std::mutex mutex;
-	std::unordered_map<ClientContext*, unique_ptr<DuckDBVFSWrapper>> registry;
+	mutex mutex;
+	unordered_map<ClientContext*, unique_ptr<DuckDBVFSWrapper>> registry;
 };
 
 static VFSRegistryData& GetVFSRegistryData() {
@@ -234,7 +235,7 @@ bool SQLiteDuckDBCacheVFS::CanHandlePath(ClientContext &context, const string &p
 
 void SQLiteDuckDBCacheVFS::Register(ClientContext &context) {
 	auto& registry_data = GetVFSRegistryData();
-	std::lock_guard<std::mutex> lock(registry_data.mutex);
+	lock_guard<mutex> lock(registry_data.mutex);
 	
 	// Check if this context already has a VFS registered
 	auto it = registry_data.registry.find(&context);
@@ -299,7 +300,7 @@ void SQLiteDuckDBCacheVFS::Register(ClientContext &context) {
 // New method to unregister VFS when context is destroyed
 void SQLiteDuckDBCacheVFS::Unregister(ClientContext &context) {
 	auto& registry_data = GetVFSRegistryData();
-	std::lock_guard<std::mutex> lock(registry_data.mutex);
+	lock_guard<mutex> lock(registry_data.mutex);
 	
 	auto it = registry_data.registry.find(&context);
 	if (it != registry_data.registry.end()) {
@@ -313,7 +314,7 @@ void SQLiteDuckDBCacheVFS::Unregister(ClientContext &context) {
 // New method to get VFS name for a context
 const char *SQLiteDuckDBCacheVFS::GetVFSNameForContext(ClientContext &context) {
 	auto& registry_data = GetVFSRegistryData();
-	std::lock_guard<std::mutex> lock(registry_data.mutex);
+	lock_guard<mutex> lock(registry_data.mutex);
 	
 	auto it = registry_data.registry.find(&context);
 	if (it != registry_data.registry.end() && it->second->vfs_name) {

@@ -13,9 +13,8 @@
 #include "duckdb/storage/buffer_manager.hpp"
 #include "duckdb/storage/buffer/buffer_handle.hpp"
 #include "duckdb/storage/caching_file_system.hpp"
+#include "duckdb/common/mutex.hpp"
 #include "sqlite3.h"
-#include <mutex>
-#include <memory>
 
 namespace duckdb {
 
@@ -48,7 +47,7 @@ private:
 	
 	// The following members are reserved for future adaptive read-ahead implementation.
 	// Currently, DuckDB's CachingFileSystem handles all caching automatically.
-	mutable std::mutex readahead_mutex;
+	mutable mutex readahead_mutex;
 	sqlite3_int64 last_read_offset;
 	sqlite3_int64 last_read_end;
 	uint64_t current_readahead_size;
