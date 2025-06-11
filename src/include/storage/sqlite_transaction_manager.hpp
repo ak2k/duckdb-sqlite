@@ -8,10 +8,10 @@
 
 #pragma once
 
-#include "duckdb/transaction/transaction_manager.hpp"
 #include "storage/sqlite_catalog.hpp"
 #include "storage/sqlite_transaction.hpp"
 #include "duckdb/common/reference_map.hpp"
+#include "duckdb/transaction/transaction_manager.hpp"
 
 namespace duckdb {
 

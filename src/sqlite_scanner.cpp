@@ -1,19 +1,21 @@
 #include "duckdb.hpp"
 
 #include "sqlite_db.hpp"
-#include "sqlite_stmt.hpp"
 #include "sqlite_scanner.hpp"
-#include <stdint.h>
-#include "duckdb/parser/parser.hpp"
-#include "duckdb/parser/expression/cast_expression.hpp"
+#include "sqlite_stmt.hpp"
+
+#include "duckdb/common/operator/cast_operators.hpp"
 #include "duckdb/common/types/date.hpp"
 #include "duckdb/common/types/timestamp.hpp"
-#include "duckdb/storage/table/row_group.hpp"
 #include "duckdb/main/client_context.hpp"
 #include "duckdb/main/config.hpp"
+#include "duckdb/parser/expression/cast_expression.hpp"
+#include "duckdb/parser/parser.hpp"
 #include "duckdb/storage/storage_extension.hpp"
-#include "duckdb/common/operator/cast_operators.hpp"
+#include "duckdb/storage/table/row_group.hpp"
+
 #include <cmath>
+#include <stdint.h>
 
 namespace duckdb {
 

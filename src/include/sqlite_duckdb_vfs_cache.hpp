@@ -10,10 +10,10 @@
 
 #include "duckdb.hpp"
 #include "duckdb/common/file_system.hpp"
-#include "duckdb/storage/buffer_manager.hpp"
-#include "duckdb/storage/buffer/buffer_handle.hpp"
-#include "duckdb/storage/caching_file_system.hpp"
 #include "duckdb/common/mutex.hpp"
+#include "duckdb/storage/buffer/buffer_handle.hpp"
+#include "duckdb/storage/buffer_manager.hpp"
+#include "duckdb/storage/caching_file_system.hpp"
 #include "sqlite3.h"
 
 namespace duckdb {

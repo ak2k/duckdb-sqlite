@@ -3,15 +3,14 @@
 #include "storage/sqlite_index_entry.hpp"
 #include "storage/sqlite_schema_entry.hpp"
 #include "storage/sqlite_table_entry.hpp"
-#include "duckdb/parser/parsed_data/create_table_info.hpp"
-#include "duckdb/parser/parsed_data/create_view_info.hpp"
 #include "duckdb/catalog/catalog_entry/index_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/view_catalog_entry.hpp"
-#include "duckdb/parser/parsed_data/create_view_info.hpp"
-#include "duckdb/parser/statement/create_statement.hpp"
-#include "duckdb/parser/parser.hpp"
-#include "duckdb/parser/parsed_expression_iterator.hpp"
 #include "duckdb/parser/expression/columnref_expression.hpp"
+#include "duckdb/parser/parsed_data/create_table_info.hpp"
+#include "duckdb/parser/parsed_data/create_view_info.hpp"
+#include "duckdb/parser/parsed_expression_iterator.hpp"
+#include "duckdb/parser/parser.hpp"
+#include "duckdb/parser/statement/create_statement.hpp"
 
 namespace duckdb {
 

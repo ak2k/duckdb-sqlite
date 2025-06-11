@@ -1,17 +1,18 @@
-#include "duckdb/parser/constraints/not_null_constraint.hpp"
-#include "duckdb/parser/constraints/unique_constraint.hpp"
-#include "duckdb/parser/expression/constant_expression.hpp"
-#include "duckdb/storage/table_storage_info.hpp"
-#include "duckdb/parser/column_list.hpp"
-#include "duckdb/parser/parser.hpp"
+#include "sqlite_db.hpp"
+#include "sqlite_duckdb_vfs_cache.hpp"
+#include "sqlite_stmt.hpp"
+
 #include "duckdb/common/exception.hpp"
 #include "duckdb/common/exception/http_exception.hpp"
 #include "duckdb/common/file_open_flags.hpp"
 #include "duckdb/common/swap.hpp"
-#include "sqlite_db.hpp"
-#include "sqlite_stmt.hpp"
-#include "sqlite_duckdb_vfs_cache.hpp"
 #include "duckdb/main/client_context.hpp"
+#include "duckdb/parser/column_list.hpp"
+#include "duckdb/parser/constraints/not_null_constraint.hpp"
+#include "duckdb/parser/constraints/unique_constraint.hpp"
+#include "duckdb/parser/expression/constant_expression.hpp"
+#include "duckdb/parser/parser.hpp"
+#include "duckdb/storage/table_storage_info.hpp"
 
 namespace duckdb {
 

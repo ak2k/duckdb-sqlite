@@ -7,14 +7,14 @@
 //===----------------------------------------------------------------------===//
 
 #include "sqlite_duckdb_vfs_cache.hpp"
-#include "duckdb/main/client_context.hpp"
-#include "duckdb/main/database.hpp"
-#include "duckdb/common/file_system.hpp"
 #include "duckdb/common/exception.hpp"
 #include "duckdb/common/exception/http_exception.hpp"
-#include "duckdb/storage/buffer_manager.hpp"
-#include "duckdb/common/unordered_map.hpp"
+#include "duckdb/common/file_system.hpp"
 #include "duckdb/common/mutex.hpp"
+#include "duckdb/common/unordered_map.hpp"
+#include "duckdb/main/client_context.hpp"
+#include "duckdb/main/database.hpp"
+#include "duckdb/storage/buffer_manager.hpp"
 #include <cstring>
 
 namespace duckdb {

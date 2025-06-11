@@ -4,15 +4,15 @@
 #include "duckdb.hpp"
 
 #include "sqlite_db.hpp"
+#include "sqlite_duckdb_vfs_cache.hpp"
 #include "sqlite_scanner.hpp"
-#include "sqlite_storage.hpp"
 #include "sqlite_scanner_extension.hpp"
+#include "sqlite_storage.hpp"
 
 #include "duckdb/catalog/catalog.hpp"
 #include "duckdb/main/extension_util.hpp"
 #include "duckdb/parser/parsed_data/create_table_function_info.hpp"
 #include "duckdb/planner/extension_callback.hpp"
-#include "sqlite_duckdb_vfs_cache.hpp"
 
 using namespace duckdb;
 
