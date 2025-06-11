@@ -43,14 +43,17 @@ namespace duckdb {
 
 // Each ClientContext gets its own VFS instance with a unique name,
 // enabling safe concurrent access while maintaining cache sharing.
+// VFS wrapper combines RAII with SQLite's C allocator for cross-DLL safety.
+// The wrapper itself uses unique_ptr for automatic cleanup, while vfs_name
+// uses sqlite3_malloc/free because SQLite may access it across module boundaries.
 struct DuckDBVFSWrapper {
 	sqlite3_vfs base;           // Must be first - SQLite VFS structure
 	ClientContext *context;     // The DuckDB context for this VFS
-	char *vfs_name;            // Unique name for this VFS instance (C-style for DLL safety)
+	char *vfs_name;            // Unique name for this VFS instance (allocated via sqlite3_malloc)
 	sqlite3_io_methods io_methods; // IO methods for this VFS instance
 	
 	~DuckDBVFSWrapper() {
-		// Clean up the C-style allocated name
+		// Clean up using SQLite's allocator to match sqlite3_malloc
 		if (vfs_name) {
 			sqlite3_free(vfs_name);
 			vfs_name = nullptr;
@@ -71,8 +74,8 @@ static VFSRegistryData& GetVFSRegistryData() {
 	return data;
 }
 
-// SQLite page size constant for sector size calculations
-static constexpr int DEFAULT_SQLITE_SECTOR_SIZE = 4096;
+// Sector size: minimum atomic write unit for the storage device
+static constexpr int SQLITE_SECTOR_SIZE = 4096;
 
 // Initialize IO methods for a VFS wrapper
 static void InitializeIOMethods(sqlite3_io_methods &io_methods) {
@@ -329,8 +332,9 @@ const char *SQLiteDuckDBCacheVFS::GetVFSNameForContext(ClientContext &context) {
 // VFS Methods
 //===--------------------------------------------------------------------===//
 
-// Macro to delegate operations to SQLite's default VFS.
-// This is used for operations that don't need special handling for remote files.
+// Macro to delegate VFS operations to SQLite's default VFS implementation.
+// Used for system-level operations (randomness, sleep, time) that don't involve
+// file I/O and thus don't need special handling for remote files.
 #define DELEGATE_TO_DEFAULT_VFS(method_name, ...) \
 	sqlite3_vfs *default_vfs = sqlite3_vfs_find(nullptr); \
 	if (default_vfs && default_vfs->method_name) { \
@@ -558,7 +562,7 @@ int SQLiteDuckDBCacheVFS::FileControl(sqlite3_file *file, int op, void *arg) {
 }
 
 int SQLiteDuckDBCacheVFS::SectorSize(sqlite3_file *file) {
-	return DEFAULT_SQLITE_SECTOR_SIZE;
+	return SQLITE_SECTOR_SIZE;
 }
 
 int SQLiteDuckDBCacheVFS::DeviceCharacteristics(sqlite3_file *file) {
