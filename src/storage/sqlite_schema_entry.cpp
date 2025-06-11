@@ -24,7 +24,7 @@ SQLiteTransaction &GetSQLiteTransaction(CatalogTransaction transaction, Catalog 
 	if (!transaction.transaction) {
 		// This should not happen in normal operation - transactions should be initialized before use.
 		// Creating one here prevents deadlocks but may indicate missing transaction initialization.
-		D_ASSERT(false);
+		D_ASSERT(false && "Transaction should have been initialized before reaching this point");
 		auto &new_transaction = Transaction::Get(transaction.GetContext(), catalog);
 		return new_transaction.Cast<SQLiteTransaction>();
 	}

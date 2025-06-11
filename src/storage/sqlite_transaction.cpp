@@ -50,7 +50,8 @@ void SQLiteTransaction::Rollback() {
 
 SQLiteDB &SQLiteTransaction::GetDB() {
 
-	// Use double-checked locking pattern for thread-safe lazy initialization
+	// Use double-checked locking to avoid mutex acquisition on every call
+	// (The mutex itself is safely initialized via function-local static)
 	if (!db || !started) {
 		lock_guard<mutex> lock(GetInitializationMutex());
 		

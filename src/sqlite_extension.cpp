@@ -3,10 +3,6 @@
 #endif
 #include "duckdb.hpp"
 
-#ifdef _WIN32
-#include <windows.h>
-#endif
-
 #include "sqlite_db.hpp"
 #include "sqlite_scanner.hpp"
 #include "sqlite_storage.hpp"
