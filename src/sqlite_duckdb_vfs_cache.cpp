@@ -388,7 +388,7 @@ int SQLiteDuckDBCacheVFS::Open(sqlite3_vfs *vfs, const char *filename, sqlite3_f
 
 	try {
 		// Ensure SQLite allocated enough space for our file structure
-		if (vfs->szOsFile < sizeof(SQLiteDuckDBCachedFile)) {
+		if (vfs->szOsFile < static_cast<int>(sizeof(SQLiteDuckDBCachedFile))) {
 			return SQLITE_CANTOPEN;
 		}
 		
