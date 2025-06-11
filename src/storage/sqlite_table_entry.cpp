@@ -47,8 +47,8 @@ TableFunction SQLiteTableEntry::GetScanFunction(ClientContext &context, unique_p
 	result->table = this;
 
 	bind_data = std::move(result);
-	// Use a function-local static to avoid creating instances during static initialization
-	// This pattern is safe on Windows and avoids the binary deserializer assertion
+	// Use a function-local static to ensure thread-safe initialization
+	// and avoid static initialization order issues (especially on Windows DLLs)
 	static SqliteScanFunction scan_function;
 	return static_cast<TableFunction>(scan_function);
 }

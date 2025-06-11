@@ -39,7 +39,6 @@ private:
 	SQLiteDB owned_db;
 	case_insensitive_map_t<unique_ptr<CatalogEntry>> catalog_entries;
 	bool started;
-	// REMOVED: mutable mutex initialization_mutex; - causes issues on Windows
 	
 	// Function-local static mutex to avoid Windows DLL initialization issues
 	static mutex& GetInitializationMutex();

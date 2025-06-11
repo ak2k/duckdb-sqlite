@@ -24,10 +24,10 @@ mutex& SQLiteTransaction::GetInitializationMutex() {
 SQLiteTransaction::SQLiteTransaction(SQLiteCatalog &sqlite_catalog, TransactionManager &manager, ClientContext &context)
     : Transaction(manager, context), sqlite_catalog(sqlite_catalog), db(nullptr), started(false) {
 
-	// CRITICAL FIX: Defer database connection AND transaction start to avoid deadlock
-	// Opening SQLite connections + starting transactions for remote files while holding 
-	// MetaTransaction lock can cause deadlocks due to HTTP requests and caching operations.
-	// Instead, we'll open the connection and start the transaction lazily when GetDB() is first called.
+	// Database connection and transaction start are deferred to prevent potential deadlocks.
+	// Opening SQLite connections for remote files can trigger HTTP requests and caching
+	// operations while the MetaTransaction lock is held, which could cause deadlocks.
+	// Both connection and transaction are initialized lazily in GetDB() when first needed.
 }
 
 SQLiteTransaction::~SQLiteTransaction() {
