@@ -69,7 +69,17 @@ static unique_ptr<FunctionData> SqliteBind(ClientContext &context, TableFunction
 	SQLiteStatement stmt;
 	SQLiteOpenOptions options;
 	options.access_mode = AccessMode::READ_ONLY;
+#ifdef _WIN32
+	fprintf(stderr, "[SQLITE_SCAN_DEBUG] About to call SQLiteDB::Open in SqliteBind\n");
+	fprintf(stderr, "[SQLITE_SCAN_DEBUG] db object address: %p\n", (void*)&db);
+	fflush(stderr);
+#endif
 	db = SQLiteDB::Open(result->file_name, options, context);
+#ifdef _WIN32
+	fprintf(stderr, "[SQLITE_SCAN_DEBUG] SQLiteDB::Open returned in SqliteBind, move assignment completed\n");
+	fprintf(stderr, "[SQLITE_SCAN_DEBUG] db.db pointer after assignment: %p\n", (void*)db.db);
+	fflush(stderr);
+#endif
 
 	ColumnList columns;
 	vector<unique_ptr<Constraint>> constraints;
@@ -79,7 +89,15 @@ static unique_ptr<FunctionData> SqliteBind(ClientContext &context, TableFunction
 	if (context.TryGetCurrentSetting("sqlite_all_varchar", sqlite_all_varchar)) {
 		result->all_varchar = BooleanValue::Get(sqlite_all_varchar);
 	}
+#ifdef _WIN32
+	fprintf(stderr, "[SQLITE_SCAN_DEBUG] About to call db.GetTableInfo\n");
+	fflush(stderr);
+#endif
 	db.GetTableInfo(result->table_name, columns, constraints, result->all_varchar);
+#ifdef _WIN32
+	fprintf(stderr, "[SQLITE_SCAN_DEBUG] db.GetTableInfo completed successfully\n");
+	fflush(stderr);
+#endif
 	for (auto &column : columns.Logical()) {
 		names.push_back(column.GetName());
 		return_types.push_back(column.GetType());
@@ -97,6 +115,11 @@ static unique_ptr<FunctionData> SqliteBind(ClientContext &context, TableFunction
 	result->types = return_types;
 	result->global_db = nullptr;  // Initialize to prevent undefined behavior
 
+#ifdef _WIN32
+	fprintf(stderr, "[SQLITE_SCAN_DEBUG] SqliteBind about to return, db will be destroyed\n");
+	fprintf(stderr, "[SQLITE_SCAN_DEBUG] db object address: %p, db.db pointer: %p\n", (void*)&db, (void*)db.db);
+	fflush(stderr);
+#endif
 	return std::move(result);
 }
 

@@ -17,16 +17,28 @@ namespace duckdb {
 static bool debug_sqlite_print_queries = false;
 
 SQLiteDB::SQLiteDB() : db(nullptr) {
+#ifdef _WIN32
+	fprintf(stderr, "[SQLITE_DB_DEBUG] Default constructor called, this=%p, db=%p\n", (void*)this, (void*)db);
+	fflush(stderr);
+#endif
 }
 
 SQLiteDB::SQLiteDB(sqlite3 *db) : db(db) {
 }
 
 SQLiteDB::~SQLiteDB() {
+#ifdef _WIN32
+	fprintf(stderr, "[SQLITE_DB_DEBUG] Destructor called, this=%p, db=%p\n", (void*)this, (void*)db);
+	fflush(stderr);
+#endif
 	Close();
+#ifdef _WIN32
+	fprintf(stderr, "[SQLITE_DB_DEBUG] Destructor finished\n");
+	fflush(stderr);
+#endif
 }
 
-SQLiteDB::SQLiteDB(SQLiteDB &&other) noexcept {
+SQLiteDB::SQLiteDB(SQLiteDB &&other) noexcept : db(nullptr) {
 #ifdef _WIN32
 	fprintf(stderr, "[SQLITE_DB_DEBUG] Move constructor called, other.db=%p, this->db=%p\n", (void*)other.db, (void*)db);
 	fflush(stderr);
@@ -43,7 +55,11 @@ SQLiteDB &SQLiteDB::operator=(SQLiteDB &&other) noexcept {
 	fprintf(stderr, "[SQLITE_DB_DEBUG] Move assignment called, other.db=%p, this->db=%p\n", (void*)other.db, (void*)db);
 	fflush(stderr);
 #endif
-	std::swap(db, other.db);
+	if (this != &other) {
+		// Close any existing database first
+		Close();
+		std::swap(db, other.db);
+	}
 #ifdef _WIN32
 	fprintf(stderr, "[SQLITE_DB_DEBUG] After move assignment, other.db=%p, this->db=%p\n", (void*)other.db, (void*)db);
 	fflush(stderr);
@@ -121,6 +137,7 @@ SQLiteDB SQLiteDB::Open(const string &path, const SQLiteOpenOptions &options, Cl
 			fprintf(stderr, "[SQLITE_DB_DEBUG] sqlite3_open_v2 returned: %d (SQLITE_OK=%d)\n", rc, SQLITE_OK);
 			if (rc == SQLITE_OK) {
 				fprintf(stderr, "[SQLITE_DB_DEBUG] Successfully opened remote database, db pointer: %p\n", (void*)result.db);
+				fprintf(stderr, "[SQLITE_DB_DEBUG] result object address: %p\n", (void*)&result);
 			}
 			fflush(stderr);
 #endif
@@ -221,14 +238,30 @@ bool SQLiteDB::IsOpen() {
 }
 
 void SQLiteDB::Close() {
+#ifdef _WIN32
+	fprintf(stderr, "[SQLITE_DB_DEBUG] Close() called, this=%p, db=%p\n", (void*)this, (void*)db);
+	fflush(stderr);
+#endif
 	if (!IsOpen()) {
+#ifdef _WIN32
+		fprintf(stderr, "[SQLITE_DB_DEBUG] Close() - database already closed\n");
+		fflush(stderr);
+#endif
 		return;
 	}
 	auto rc = sqlite3_close_v2(db);
+#ifdef _WIN32
+	fprintf(stderr, "[SQLITE_DB_DEBUG] sqlite3_close_v2 returned: %d\n", rc);
+	fflush(stderr);
+#endif
 	if (rc == SQLITE_BUSY) {
 		throw InternalException("Failed to close database - SQLITE_BUSY");
 	}
 	db = nullptr;
+#ifdef _WIN32
+	fprintf(stderr, "[SQLITE_DB_DEBUG] Close() finished, db set to nullptr\n");
+	fflush(stderr);
+#endif
 }
 
 vector<string> SQLiteDB::GetEntries(string entry_type) {
