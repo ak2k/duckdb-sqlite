@@ -7,6 +7,7 @@
 #include "duckdb/common/exception.hpp"
 #include "duckdb/common/exception/http_exception.hpp"
 #include "duckdb/common/file_open_flags.hpp"
+#include "duckdb/common/swap.hpp"
 #include "sqlite_db.hpp"
 #include "sqlite_stmt.hpp"
 #include "sqlite_duckdb_vfs_cache.hpp"
@@ -31,7 +32,7 @@ SQLiteDB::~SQLiteDB() {
 
 SQLiteDB::SQLiteDB(SQLiteDB &&other) noexcept : db(nullptr) {
 
-	std::swap(db, other.db);
+	swap(db, other.db);
 
 }
 
@@ -40,7 +41,7 @@ SQLiteDB &SQLiteDB::operator=(SQLiteDB &&other) noexcept {
 	if (this != &other) {
 		// Close any existing database first
 		Close();
-		std::swap(db, other.db);
+		swap(db, other.db);
 	}
 
 	return *this;

@@ -137,26 +137,4 @@ struct SQLiteDuckDBCachedFile {
 };
 #endif
 
-// RAII helper for automatic VFS registration/unregistration.
-// Ensures that the VFS is properly cleaned up when the context is destroyed.
-class SQLiteVFSRegistration {
-public:
-	explicit SQLiteVFSRegistration(ClientContext &context) : context(context) {
-		SQLiteDuckDBCacheVFS::Register(context);
-	}
-	
-	~SQLiteVFSRegistration() {
-		SQLiteDuckDBCacheVFS::Unregister(context);
-	}
-	
-	// Disable copy and move to ensure single ownership
-	SQLiteVFSRegistration(const SQLiteVFSRegistration&) = delete;
-	SQLiteVFSRegistration& operator=(const SQLiteVFSRegistration&) = delete;
-	SQLiteVFSRegistration(SQLiteVFSRegistration&&) = delete;
-	SQLiteVFSRegistration& operator=(SQLiteVFSRegistration&&) = delete;
-	
-private:
-	ClientContext &context;
-};
-
 } // namespace duckdb

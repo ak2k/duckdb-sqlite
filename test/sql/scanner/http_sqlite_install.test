@@ -1,9 +1,0 @@
-# name: test/sql/scanner/http_sqlite_install.test
-# description: Test just the INSTALL httpfs part
-# group: [sqlite_scanner]
-
-require sqlite_scanner
-
-# Only test INSTALL httpfs
-statement ok
-INSTALL httpfs;

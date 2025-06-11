@@ -28,8 +28,8 @@ namespace duckdb {
 //
 // 3. Context Lifetime Requirements
 //    - ClientContext MUST outlive all SQLite connections using its VFS
-//    - Call Unregister() before destroying the ClientContext
-//    - Consider using SQLiteVFSRegistration RAII helper for automatic cleanup
+//    - VFS is automatically unregistered when connection is closed
+//    - Cleanup handled by SQLiteVFSCleanupCallback in extension initialization
 //
 // 4. What the Mutex Protects
 //    - vfs_registry map operations (insert/find/erase)

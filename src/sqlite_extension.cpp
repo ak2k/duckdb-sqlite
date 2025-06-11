@@ -15,6 +15,8 @@
 #include "duckdb/catalog/catalog.hpp"
 #include "duckdb/main/extension_util.hpp"
 #include "duckdb/parser/parsed_data/create_table_function_info.hpp"
+#include "duckdb/planner/extension_callback.hpp"
+#include "sqlite_duckdb_vfs_cache.hpp"
 
 using namespace duckdb;
 
@@ -23,6 +25,15 @@ extern "C" {
 static void SetSqliteDebugQueryPrint(ClientContext &context, SetScope scope, Value &parameter) {
 	SQLiteDB::DebugSetPrintQueries(BooleanValue::Get(parameter));
 }
+
+// Cleanup callback for VFS when connection is closed
+class SQLiteVFSCleanupCallback : public ExtensionCallback {
+public:
+	void OnConnectionClosed(ClientContext &context) override {
+		// Unregister the VFS for this context if it was registered
+		SQLiteDuckDBCacheVFS::Unregister(context);
+	}
+};
 
 static void LoadInternal(DatabaseInstance &db) {
 	// Create function instances inline like built-in functions do
@@ -52,6 +63,9 @@ static void LoadInternal(DatabaseInstance &db) {
 	if (config.storage_extensions.find("sqlite_scanner") == config.storage_extensions.end()) {
 		config.storage_extensions["sqlite_scanner"] = make_uniq<SQLiteStorageExtension>();
 	}
+	
+	// Register cleanup callback for VFS
+	config.extension_callbacks.push_back(make_uniq<SQLiteVFSCleanupCallback>());
 	
 	// HTTP SQLite support is handled entirely by VFS through DuckDB's CachingFileSystem
 }

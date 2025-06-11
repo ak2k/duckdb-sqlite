@@ -1,6 +1,7 @@
 #include "sqlite_stmt.hpp"
 #include "sqlite_db.hpp"
 #include "sqlite_scanner.hpp"
+#include "duckdb/common/swap.hpp"
 
 namespace duckdb {
 
@@ -20,8 +21,8 @@ SQLiteStatement::~SQLiteStatement() {
 
 SQLiteStatement::SQLiteStatement(SQLiteStatement &&other) noexcept : db(nullptr), stmt(nullptr) {
 
-	std::swap(db, other.db);
-	std::swap(stmt, other.stmt);
+	swap(db, other.db);
+	swap(stmt, other.stmt);
 
 }
 
