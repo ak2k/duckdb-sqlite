@@ -1,3 +1,11 @@
+//===----------------------------------------------------------------------===//
+//                         DuckDB
+//
+// sqlite_duckdb_vfs_cache.cpp
+//
+//
+//===----------------------------------------------------------------------===//
+
 #include "sqlite_duckdb_vfs_cache.hpp"
 #include "duckdb/main/client_context.hpp"
 #include "duckdb/main/database.hpp"
@@ -12,34 +20,25 @@
 namespace duckdb {
 
 //===--------------------------------------------------------------------===//
-// Thread Safety Documentation
+// Concurrency Design
 //===--------------------------------------------------------------------===//
-// This implementation provides the following thread safety guarantees:
+// This VFS implementation is designed for safe concurrent access:
 //
-// 1. VFS Registration/Unregistration (THREAD-SAFE)
-//    - Protected by vfs_registry_mutex
-//    - Safe to call from multiple threads simultaneously
-//    - Each ClientContext gets its own independent VFS instance
+// VFS Registry (mutex-protected):
+//   - Each ClientContext gets its own VFS instance with unique name
+//   - Registration/unregistration operations are thread-safe
+//   - Mutex protects registry map operations, not file I/O
 //
-// 2. File Operations (THREAD-SAFE)
-//    - No shared mutable state between VFS instances
-//    - Each file handle contains its own context pointer
-//    - DuckDB's CachingFileSystem handles internal synchronization
+// File Operations (lock-free):
+//   - Each VFS instance is independent with no shared mutable state
+//   - File handles contain their own ClientContext pointer
+//   - DuckDB's CachingFileSystem provides internal synchronization
 //
-// 3. Context Lifetime Requirements
-//    - ClientContext MUST outlive all SQLite connections using its VFS
-//    - VFS is automatically unregistered when connection is closed
-//    - Cleanup handled by SQLiteVFSCleanupCallback in extension initialization
-//
-// 4. What the Mutex Protects
-//    - vfs_registry map operations (insert/find/erase)
-//    - VFS name generation and lookup
-//    - Does NOT protect file I/O operations (not needed)
-//
-// 5. Cache Sharing
-//    - Multiple VFS instances share the same ExternalFileCache
-//    - Cache is managed at the DatabaseInstance level
-//    - Thread-safe through DuckDB's internal locking mechanisms
+// Lifetime Management:
+//   - ClientContext MUST outlive all SQLite connections using its VFS
+//   - VFS automatically unregistered when ClientContext is destroyed
+//   - Multiple VFS instances share the same ExternalFileCache at DatabaseInstance level
+//   - Cache sharing is thread-safe through DuckDB's internal locking mechanisms
 //===--------------------------------------------------------------------===//
 
 // Dynamic VFS registration approach to eliminate thread-local storage issues.
