@@ -55,6 +55,13 @@ public:
 
 	bool IsOpen();
 	void Close();
+
+private:
+	//! Helper functions for Open methods
+	static int GetOpenFlags(const SQLiteOpenOptions &options, bool is_shared, bool is_remote = false);
+	static void ApplyBusyTimeout(sqlite3 *db, const SQLiteOpenOptions &options);
+	static void HandleOpenError(const string &path, int rc, ClientContext *context = nullptr);
+	static SQLiteDB OpenWithVFS(const string &path, const SQLiteOpenOptions &options, ClientContext &context, bool is_shared);
 };
 
 } // namespace duckdb

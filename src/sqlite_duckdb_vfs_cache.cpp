@@ -41,9 +41,8 @@ namespace duckdb {
 //   - Cache sharing is thread-safe through DuckDB's internal locking mechanisms
 //===--------------------------------------------------------------------===//
 
-// Dynamic VFS registration approach to eliminate thread-local storage issues.
-// Each ClientContext gets its own VFS instance with a unique name.
-// This avoids Windows SIGSEGV issues while maintaining cache sharing.
+// Each ClientContext gets its own VFS instance with a unique name,
+// enabling safe concurrent access while maintaining cache sharing.
 struct DuckDBVFSWrapper {
 	sqlite3_vfs base;           // Must be first - SQLite VFS structure
 	ClientContext *context;     // The DuckDB context for this VFS

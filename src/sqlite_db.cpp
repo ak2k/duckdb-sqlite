@@ -48,14 +48,15 @@ SQLiteDB &SQLiteDB::operator=(SQLiteDB &&other) noexcept {
 	return *this;
 }
 
-SQLiteDB SQLiteDB::Open(const string &path, const SQLiteOpenOptions &options, bool is_shared) {
-	SQLiteDB result;
+int SQLiteDB::GetOpenFlags(const SQLiteOpenOptions &options, bool is_shared, bool is_remote) {
 	int flags = SQLITE_OPEN_PRIVATECACHE;
-	if (options.access_mode == AccessMode::READ_ONLY) {
+	
+	if (is_remote || options.access_mode == AccessMode::READ_ONLY) {
 		flags |= SQLITE_OPEN_READONLY;
 	} else {
 		flags |= SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE;
 	}
+	
 	if (!is_shared) {
 		// Disable SQLite's internal mutex for single-threaded access.
 		// Each connection should only be used by one thread at a time.
@@ -63,82 +64,91 @@ SQLiteDB SQLiteDB::Open(const string &path, const SQLiteOpenOptions &options, bo
 		// object across threads
 		flags |= SQLITE_OPEN_NOMUTEX;
 	}
+	
 	flags |= SQLITE_OPEN_EXRESCODE;
-	auto rc = sqlite3_open_v2(path.c_str(), &result.db, flags, nullptr);
-	if (rc != SQLITE_OK) {
-		throw ConnectionException("Unable to open database \"%s\": %s", path, sqlite3_errstr(rc));
-	}
-	// default busy time-out of 5 seconds
+	return flags;
+}
+
+void SQLiteDB::ApplyBusyTimeout(sqlite3 *db, const SQLiteOpenOptions &options) {
 	if (options.busy_timeout > 0) {
 		if (options.busy_timeout > NumericLimits<int>::Maximum()) {
 			throw BinderException("busy_timeout out of range - must be within valid range for type int");
 		}
-		rc = sqlite3_busy_timeout(result.db, int(options.busy_timeout));
+		auto rc = sqlite3_busy_timeout(db, int(options.busy_timeout));
 		if (rc != SQLITE_OK) {
-			throw ConnectionException("Failed to set busy timeout: %s", sqlite3_errmsg(result.db));
+			throw ConnectionException("Failed to set busy timeout: %s", sqlite3_errmsg(db));
 		}
 	}
+}
+
+void SQLiteDB::HandleOpenError(const string &path, int rc, ClientContext *context) {
+	// If we have a context, try to get a more specific error message
+	if (context) {
+		try {
+			auto &fs = context->db->GetFileSystem();
+			auto file_handle = fs.OpenFile(path, FileFlags::FILE_FLAGS_READ);
+		} catch (const HTTPException &e) {
+			// Re-throw HTTP errors with their original message
+			throw HTTPException(e.what());
+		} catch (const Exception &e) {
+			// Re-throw other DuckDB exceptions as-is
+			throw;
+		} catch (...) {
+			// Fall back to SQLite's error message
+			throw ConnectionException("Unable to open database \"%s\": %s", path, sqlite3_errstr(rc));
+		}
+		
+		// If OpenFile succeeded but SQLite failed, report SQLite's error
+		throw ConnectionException("Unable to open database \"%s\": %s", path, sqlite3_errstr(rc));
+	} else {
+		// No context available, just throw SQLite's error
+		throw ConnectionException("Unable to open database \"%s\": %s", path, sqlite3_errstr(rc));
+	}
+}
+
+SQLiteDB SQLiteDB::Open(const string &path, const SQLiteOpenOptions &options, bool is_shared) {
+	SQLiteDB result;
+	int flags = GetOpenFlags(options, is_shared, false);
+	
+	auto rc = sqlite3_open_v2(path.c_str(), &result.db, flags, nullptr);
+	if (rc != SQLITE_OK) {
+		HandleOpenError(path, rc);
+	}
+	
+	ApplyBusyTimeout(result.db, options);
+	
 	if (!options.journal_mode.empty()) {
 		result.Execute("PRAGMA journal_mode=" + KeywordHelper::EscapeQuotes(options.journal_mode, '\''));
 	}
 	return result;
 }
 
-SQLiteDB SQLiteDB::Open(const string &path, const SQLiteOpenOptions &options, ClientContext &context, bool is_shared) {
+SQLiteDB SQLiteDB::OpenWithVFS(const string &path, const SQLiteOpenOptions &options, ClientContext &context, bool is_shared) {
+	// Register our VFS to handle this remote file
+	SQLiteDuckDBCacheVFS::Register(context);
+	
+	SQLiteDB result;
+	int flags = GetOpenFlags(options, is_shared, true);
+	
+	auto rc = sqlite3_open_v2(path.c_str(), &result.db, flags, SQLiteDuckDBCacheVFS::GetVFSNameForContext(context));
+	if (rc != SQLITE_OK) {
+		HandleOpenError(path, rc, &context);
+	}
+	
+	ApplyBusyTimeout(result.db, options);
+	
+	// Note: journal_mode is not supported for remote databases
+	// Remote databases are always read-only
+	
+	return result;
+}
 
+SQLiteDB SQLiteDB::Open(const string &path, const SQLiteOpenOptions &options, ClientContext &context, bool is_shared) {
 	// Remote SQLite databases are accessed through our custom VFS
 	// which uses DuckDB's CachingFileSystem for efficient block caching
 	if (FileSystem::IsRemoteFile(path)) {
-
 		if (SQLiteDuckDBCacheVFS::CanHandlePath(context, path)) {
-
-			// Register our VFS to handle this remote file
-			SQLiteDuckDBCacheVFS::Register(context);
-			SQLiteDB result;
-			int flags = SQLITE_OPEN_PRIVATECACHE | SQLITE_OPEN_READONLY;
-			if (!is_shared) {
-				// FIXME: we should just make sure we are not re-using the same `sqlite3`
-				// object across threads
-				flags |= SQLITE_OPEN_NOMUTEX;
-			}
-			flags |= SQLITE_OPEN_EXRESCODE;
-			
-			auto rc = sqlite3_open_v2(path.c_str(), &result.db, flags, SQLiteDuckDBCacheVFS::GetVFSNameForContext(context));
-
-			if (rc != SQLITE_OK) {
-				// SQLite failed to open the file. Try opening it directly with
-				// DuckDB's filesystem to get a more specific error message.
-				try {
-					auto &fs = context.db->GetFileSystem();
-					auto file_handle = fs.OpenFile(path, FileFlags::FILE_FLAGS_READ);
-				} catch (const HTTPException &e) {
-					// Re-throw HTTP errors with their original message
-					throw HTTPException(e.what());
-				} catch (const Exception &e) {
-					// Re-throw other DuckDB exceptions as-is
-					throw;
-				} catch (...) {
-					// Fall back to SQLite's error message
-					throw ConnectionException("Unable to open database \"%s\": %s", path, sqlite3_errstr(rc));
-				}
-				
-				// If OpenFile succeeded but SQLite failed, report SQLite's error
-				throw ConnectionException("Unable to open database \"%s\": %s", path, sqlite3_errstr(rc));
-			}
-			
-			// Apply busy timeout setting
-			if (options.busy_timeout > 0) {
-				if (options.busy_timeout > NumericLimits<int>::Maximum()) {
-					throw BinderException("busy_timeout out of range - must be within valid range for type int");
-				}
-				rc = sqlite3_busy_timeout(result.db, int(options.busy_timeout));
-				if (rc != SQLITE_OK) {
-					throw ConnectionException("Failed to set busy timeout: %s", sqlite3_errmsg(result.db));
-				}
-			}
-			
-
-			return result;
+			return OpenWithVFS(path, options, context, is_shared);
 		} else {
 			// Path not supported by our VFS - use standard SQLite
 			return Open(path, options, is_shared);
