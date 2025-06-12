@@ -5,6 +5,7 @@
 
 #include "sqlite_db.hpp"
 #include "sqlite_duckdb_vfs_cache.hpp"
+#include "sqlite_concurrent_vfs.hpp"
 #include "sqlite_scanner.hpp"
 #include "sqlite_scanner_extension.hpp"
 #include "sqlite_storage.hpp"
@@ -54,6 +55,19 @@ static void LoadInternal(DatabaseInstance &db) {
 
 	config.AddExtensionOption("sqlite_debug_show_queries", "DEBUG SETTING: print all queries sent to SQLite to stdout",
 	                          LogicalType::BOOLEAN, Value::BOOLEAN(false), SetSqliteDebugQueryPrint);
+	
+	// Concurrent VFS callback - inline definition to avoid linking issues
+	auto SetSQLiteConcurrentVFS = [](ClientContext &context, SetScope scope, Value &parameter) {
+		if (scope == SetScope::GLOBAL) {
+			SQLiteConcurrentVFS::SetConcurrentMode(parameter.GetValue<bool>());
+		} else {
+			throw InvalidInputException("sqlite_concurrent_vfs must be set at the global level");
+		}
+	};
+	
+	config.AddExtensionOption("sqlite_concurrent_vfs", 
+	                          "Enable concurrent VFS mode for remote SQLite files (trades memory for concurrency)", 
+	                          LogicalType::BOOLEAN, Value::BOOLEAN(false), SetSQLiteConcurrentVFS);
 
 	// Only register storage extension if not already present
 	if (config.storage_extensions.find("sqlite_scanner") == config.storage_extensions.end()) {

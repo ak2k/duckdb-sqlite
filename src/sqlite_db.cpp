@@ -1,5 +1,6 @@
 #include "sqlite_db.hpp"
 #include "sqlite_duckdb_vfs_cache.hpp"
+#include "sqlite_concurrent_vfs.hpp"
 #include "sqlite_stmt.hpp"
 
 #include "duckdb/common/exception.hpp"
@@ -144,11 +145,14 @@ SQLiteDB SQLiteDB::OpenWithVFS(const string &path, const SQLiteOpenOptions &opti
 	return result;
 }
 
+
 // Main entry point for opening SQLite databases - handles both local and remote files
 // Remote files (HTTP/HTTPS) use DuckDB's VFS with caching, local files use standard SQLite
 SQLiteDB SQLiteDB::Open(const string &path, const SQLiteOpenOptions &options, ClientContext &context, bool is_shared) {
 	if (FileSystem::IsRemoteFile(path)) {
 		if (SQLiteDuckDBCacheVFS::CanHandlePath(context, path)) {
+			// For now, always use the regular VFS during bind phase
+			// Per-connection VFS will be used during actual scanning
 			return OpenWithVFS(path, options, context, is_shared);
 		} else {
 			// Path not supported by our VFS - use standard SQLite
@@ -158,6 +162,11 @@ SQLiteDB SQLiteDB::Open(const string &path, const SQLiteOpenOptions &options, Cl
 		// Local files use standard SQLite file handling
 		return OpenLocal(path, options, is_shared);
 	}
+}
+
+// Open for scanning - same as regular Open since thread-local contexts handle concurrency
+SQLiteDB SQLiteDB::OpenForScanning(const string &path, const SQLiteOpenOptions &options, ClientContext &context, bool is_shared) {
+	return Open(path, options, context, is_shared);
 }
 
 void SQLiteDB::CheckDBValid(sqlite3 *db) {
@@ -209,12 +218,15 @@ void SQLiteDB::Close() {
 
 		return;
 	}
+	
+	// Close the SQLite database first
 	auto rc = sqlite3_close_v2(db);
 
 	if (rc == SQLITE_BUSY) {
 		throw InternalException("Failed to close database - SQLITE_BUSY");
 	}
 	db = nullptr;
+	
 
 }
 
@@ -422,5 +434,6 @@ idx_t SQLiteDB::RunPragma(string pragma_name) {
 void SQLiteDB::DebugSetPrintQueries(bool print) {
 	debug_sqlite_print_queries = print;
 }
+
 
 } // namespace duckdb

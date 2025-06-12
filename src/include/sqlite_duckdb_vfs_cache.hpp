@@ -35,24 +35,24 @@ public:
 	const string &GetPath() const { return path; }
 
 private:
+	// Adaptive read-ahead constants
+	static constexpr uint64_t MIN_READAHEAD_SIZE = static_cast<uint64_t>(64) * 1024;         // 64KB
+	static constexpr uint64_t MAX_READAHEAD_SIZE = static_cast<uint64_t>(128) * 1024 * 1024; // 128MB
+	static constexpr uint64_t SEQUENTIAL_THRESHOLD = static_cast<uint64_t>(64) * 1024;       // 64KB gap tolerance
+
 	// Lazy initialization - defer DuckDB operations until first use
 	void EnsureInitialized();
 
-	ClientContext &context;
+	ClientContext *context;  // Changed to pointer to support reassignment
 	string path;
 	unique_ptr<CachingFileHandle> caching_handle;
-	sqlite3_int64 cached_file_size;  // Cached to avoid repeated remote calls
+	sqlite3_int64 cached_file_size = -1;  // Cached to avoid repeated remote calls
 	bool initialized = false;
 	
 	// Adaptive read-ahead state (no mutex needed - SQLite ensures single-threaded access per file handle)
-	sqlite3_int64 last_read_offset;     // Track last read position
-	sqlite3_int64 last_read_end;        // End of last read (offset + amount)
-	uint64_t current_readahead_size;    // Current read-ahead block size
-	
-	// Adaptive read-ahead constants
-	static constexpr uint64_t MIN_READAHEAD_SIZE = static_cast<uint64_t>(1024) * 1024;       // 1MB
-	static constexpr uint64_t MAX_READAHEAD_SIZE = static_cast<uint64_t>(128) * 1024 * 1024; // 128MB
-	static constexpr uint64_t SEQUENTIAL_THRESHOLD = static_cast<uint64_t>(64) * 1024;       // 64KB gap tolerance
+	sqlite3_int64 last_read_offset = -1;     // Track last read position
+	sqlite3_int64 last_read_end = -1;        // End of last read (offset + amount)
+	uint64_t current_readahead_size = MIN_READAHEAD_SIZE;    // Current read-ahead block size
 	
 	// Helper methods for adaptive read-ahead
 	uint64_t CalculateReadAheadSize(sqlite3_int64 offset, int amount) const;
@@ -74,6 +74,7 @@ public:
 	static const char *GetVFSNameForContext(ClientContext &context);
 	// Get the default VFS registration name (for compatibility)
 	static const char *GetVFSName() { return "duckdb_cache_fs"; }
+	
 
 	// SQLite VFS interface methods (must be public for C callback registration)
 	// Note: SQLite expects these to use the C calling convention

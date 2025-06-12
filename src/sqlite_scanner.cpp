@@ -3,6 +3,7 @@
 #include "sqlite_db.hpp"
 #include "sqlite_scanner.hpp"
 #include "sqlite_stmt.hpp"
+#include "sqlite_concurrent_vfs.hpp"
 
 #include "duckdb/common/operator/cast_operators.hpp"
 #include "duckdb/common/types/date.hpp"
@@ -16,6 +17,7 @@
 
 #include <cmath>
 #include <stdint.h>
+#include <thread>
 
 namespace duckdb {
 
@@ -99,7 +101,10 @@ static void SqliteInitInternal(ClientContext &context, const SqliteBindData &bin
 	if (!local_state.db) {
 		SQLiteOpenOptions options;
 		options.access_mode = AccessMode::READ_ONLY;
-		local_state.owned_db = SQLiteDB::Open(bind_data.file_name.c_str(), options, context);
+		Printer::Print(StringUtil::Format("DEBUG: SqliteInitInternal opening database for thread %llu, rowid %llu-%llu\n",
+		                                 (unsigned long long)std::hash<std::thread::id>{}(std::this_thread::get_id()),
+		                                 (unsigned long long)rowid_min, (unsigned long long)rowid_max));
+		local_state.owned_db = SQLiteDB::OpenForScanning(bind_data.file_name.c_str(), options, context);
 		local_state.db = &local_state.owned_db;
 	}
 	string sql;

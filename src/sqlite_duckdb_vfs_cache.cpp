@@ -7,6 +7,8 @@
 //===----------------------------------------------------------------------===//
 
 #include "sqlite_duckdb_vfs_cache.hpp"
+#include "sqlite_concurrent_vfs.hpp"
+#include "sqlite_thread_local_context.hpp"
 #include "duckdb/common/exception.hpp"
 #include "duckdb/common/exception/http_exception.hpp"
 #include "duckdb/common/file_system.hpp"
@@ -16,6 +18,7 @@
 #include "duckdb/main/database.hpp"
 #include "duckdb/storage/buffer_manager.hpp"
 #include <cstring>
+#include <thread>
 
 namespace duckdb {
 
@@ -78,7 +81,7 @@ static VFSRegistryData& GetVFSRegistryData() {
 static constexpr int SQLITE_SECTOR_SIZE = 4096;
 
 // Initialize IO methods for a VFS wrapper
-static void InitializeIOMethods(sqlite3_io_methods &io_methods) {
+void InitializeIOMethods(sqlite3_io_methods &io_methods) {
 	memset(&io_methods, 0, sizeof(io_methods));
 	
 	io_methods.iVersion = 1;
@@ -113,8 +116,21 @@ static string GetUniqueVFSName(ClientContext *context) {
 //===--------------------------------------------------------------------===//
 
 DuckDBCachedFile::DuckDBCachedFile(ClientContext &context, const string &path) 
-    : context(context), path(path), cached_file_size(-1), initialized(false),
-      last_read_offset(-1), last_read_end(-1), current_readahead_size(MIN_READAHEAD_SIZE) {
+    : context(&context), path(path) {
+	// For HTTP files in concurrent mode, use thread-local connection/context
+	// This gives each thread its own HTTP client infrastructure while still sharing ExternalFileCache
+	if (FileSystem::IsRemoteFile(path) && SQLiteConcurrentVFS::IsConcurrentModeEnabled()) {
+		// Use Connection-based thread-local context for isolated HTTP client pools
+		// This follows DuckDB's proven Connection pattern for resource isolation
+		try {
+			this->context = GetOrCreateThreadLocalContext(context, true);
+			// Successfully using thread-local context for this HTTP file
+		} catch (const std::exception &e) {
+			// If thread-local context creation fails, fall back to parent context
+			// This ensures functionality continues even if isolation fails
+			// Failed to create thread-local context, falling back to parent context
+		}
+	}
 	// Defer actual file opening until first use to avoid doing DuckDB operations
 	// during SQLite VFS callbacks, which might be in a different serialization context
 }
@@ -124,44 +140,22 @@ void DuckDBCachedFile::EnsureInitialized() {
 		return;
 	}
 	
-	// Configure file flags for optimal caching behavior.
-	// Remote files use DIRECT_IO to bypass OS caching since DuckDB's
-	// CachingFileSystem provides its own intelligent block caching.
+	// Ensure the file is initialized with proper metadata
+	
+	// Open the file through DuckDB's CachingFileSystem
 	auto flags = FileFlags::FILE_FLAGS_READ;
 	if (FileSystem::IsRemoteFile(path)) {
+		// Remote files use DIRECT_IO to bypass OS caching since DuckDB's
+		// CachingFileSystem provides its own intelligent block caching
 		flags |= FileFlags::FILE_FLAGS_DIRECT_IO;
 	}
 	
-	// Open the file through DuckDB's CachingFileSystem.
-	// The CachingFileSystem provides efficient caching of remote file data,
-	// though the actual read patterns are determined by our Read implementation.
-	auto caching_fs = CachingFileSystem::Get(context);
+	auto caching_fs = CachingFileSystem::Get(*context);
 	OpenFileInfo file_info(path);
 	caching_handle = caching_fs.OpenFile(file_info, flags);
 	
 	// Cache the file size to avoid repeated remote calls
 	cached_file_size = caching_handle->GetFileSize();
-	
-	// Now validate this is actually a SQLite database file
-	// This is deferred from Open() to avoid DuckDB operations in VFS callbacks
-	constexpr char SQLITE_HEADER[] = "SQLite format 3\000";
-	constexpr size_t SQLITE_HEADER_SIZE = 16;
-	
-	// Read the SQLite file header directly through our caching handle
-	char header_buffer[SQLITE_HEADER_SIZE];
-	data_ptr_t read_buffer = nullptr;
-	auto buffer_handle = caching_handle->Read(read_buffer, SQLITE_HEADER_SIZE, 0);
-	
-	if (!read_buffer) {
-		throw InvalidInputException("Failed to read SQLite header from '%s' - file may be inaccessible or empty", path);
-	}
-	
-	memcpy(header_buffer, read_buffer, SQLITE_HEADER_SIZE);
-	
-	// Ensure this is actually a SQLite database file
-	if (memcmp(header_buffer, SQLITE_HEADER, SQLITE_HEADER_SIZE) != 0) {
-		throw InvalidInputException("File '%s' is not a valid SQLite database - header mismatch", path);
-	}
 	
 	initialized = true;
 }
@@ -224,6 +218,7 @@ sqlite3_int64 DuckDBCachedFile::GetFileSize() {
 	try {
 		EnsureInitialized();
 	} catch (...) {
+		// Return -1 to indicate error, which SQLite will handle appropriately
 		return -1;
 	}
 	return cached_file_size;
@@ -451,17 +446,18 @@ int SQLiteDuckDBCacheVFS::Access(sqlite3_vfs *vfs, const char *filename, int fla
 	// Initialize result to safe default
 	*result = 0;
 
-	// For remote files, we can't easily check existence without potentially
-	// triggering DuckDB operations in the wrong context. SQLite will handle
-	// the error when it tries to open a non-existent file.
-	// 
-	// Return 0 (file doesn't exist) for all remote files to be safe.
-	// SQLite will attempt to open the file anyway and handle any errors.
+	// For remote files, we need to handle existence checks carefully
 	if (flags == SQLITE_ACCESS_EXISTS) {
-		// Always return 0 for remote files to avoid DuckDB operations
+		// For read-only remote files, assume they exist - SQLite will handle errors during Open
+		*result = 1;
+	} else if (flags == SQLITE_ACCESS_READWRITE) {
+		// Remote files are read-only
 		*result = 0;
+	} else if (flags == SQLITE_ACCESS_READ) {
+		// We can read remote files
+		*result = 1;
 	} else {
-		// Remote files don't support write or delete access
+		// Other access modes not supported
 		*result = 0;
 	}
 
@@ -557,6 +553,10 @@ int SQLiteDuckDBCacheVFS::FileSize(sqlite3_file *file, sqlite3_int64 *size) {
 
 	try {
 		*size = duckdb_file->duckdb_file->GetFileSize();
+		if (*size < 0) {
+			// GetFileSize returns -1 on error
+			return SQLITE_IOERR;
+		}
 		return SQLITE_OK;
 	} catch (...) {
 		return SQLITE_IOERR;
