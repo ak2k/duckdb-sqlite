@@ -142,26 +142,9 @@ void DuckDBCachedFile::EnsureInitialized() {
 	// Cache the file size to avoid repeated remote calls
 	cached_file_size = caching_handle->GetFileSize();
 	
-	// Now validate this is actually a SQLite database file
-	// This is deferred from Open() to avoid DuckDB operations in VFS callbacks
-	constexpr char SQLITE_HEADER[] = "SQLite format 3\000";
-	constexpr size_t SQLITE_HEADER_SIZE = 16;
-	
-	// Read the SQLite file header directly through our caching handle
-	char header_buffer[SQLITE_HEADER_SIZE];
-	data_ptr_t read_buffer = nullptr;
-	auto buffer_handle = caching_handle->Read(read_buffer, SQLITE_HEADER_SIZE, 0);
-	
-	if (!read_buffer) {
-		throw InvalidInputException("Failed to read SQLite header from '%s' - file may be inaccessible or empty", path);
-	}
-	
-	memcpy(header_buffer, read_buffer, SQLITE_HEADER_SIZE);
-	
-	// Ensure this is actually a SQLite database file
-	if (memcmp(header_buffer, SQLITE_HEADER, SQLITE_HEADER_SIZE) != 0) {
-		throw InvalidInputException("File '%s' is not a valid SQLite database - header mismatch", path);
-	}
+	// SQLite will validate the file format when it opens the database.
+	// We don't need to check the header ourselves - this avoids an extra
+	// read operation and lets SQLite handle invalid files appropriately.
 	
 	initialized = true;
 }
