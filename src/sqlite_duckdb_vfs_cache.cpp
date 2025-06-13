@@ -113,8 +113,7 @@ static string GetUniqueVFSName(ClientContext *context) {
 //===--------------------------------------------------------------------===//
 
 DuckDBCachedFile::DuckDBCachedFile(ClientContext &context, const string &path) 
-    : context(context), path(path), cached_file_size(-1), initialized(false),
-      last_read_offset(-1), last_read_end(-1), current_readahead_size(MIN_READAHEAD_SIZE) {
+    : context(context), path(path) {
 	// Defer actual file opening until first use to avoid doing DuckDB operations
 	// during SQLite VFS callbacks, which might be in a different serialization context
 }
@@ -141,11 +140,7 @@ void DuckDBCachedFile::EnsureInitialized() {
 	
 	// Cache the file size to avoid repeated remote calls
 	cached_file_size = caching_handle->GetFileSize();
-	
-	// SQLite will validate the file format when it opens the database.
-	// We don't need to check the header ourselves - this avoids an extra
-	// read operation and lets SQLite handle invalid files appropriately.
-	
+		
 	initialized = true;
 }
 

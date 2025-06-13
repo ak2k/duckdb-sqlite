@@ -41,13 +41,13 @@ private:
 	ClientContext &context;
 	string path;
 	unique_ptr<CachingFileHandle> caching_handle;
-	sqlite3_int64 cached_file_size;  // Cached to avoid repeated remote calls
+	sqlite3_int64 cached_file_size = -1;  // Cached to avoid repeated remote calls
 	bool initialized = false;
 	
 	// Adaptive read-ahead state (no mutex needed - SQLite ensures single-threaded access per file handle)
-	sqlite3_int64 last_read_offset;     // Track last read position
-	sqlite3_int64 last_read_end;        // End of last read (offset + amount)
-	uint64_t current_readahead_size;    // Current read-ahead block size
+	sqlite3_int64 last_read_offset = -1;     // Track last read position
+	sqlite3_int64 last_read_end = -1;        // End of last read (offset + amount)
+	uint64_t current_readahead_size = MIN_READAHEAD_SIZE;    // Current read-ahead block size
 	
 	// Adaptive read-ahead constants
 	static constexpr uint64_t MIN_READAHEAD_SIZE = static_cast<uint64_t>(1024) * 1024;       // 1MB
