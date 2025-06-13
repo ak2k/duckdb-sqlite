@@ -38,6 +38,11 @@ private:
 	// Lazy initialization - defer DuckDB operations until first use
 	void EnsureInitialized();
 
+	// Adaptive read-ahead constants
+	static constexpr uint64_t MIN_READAHEAD_SIZE = static_cast<uint64_t>(1024) * 1024;       // 1MB
+	static constexpr uint64_t MAX_READAHEAD_SIZE = static_cast<uint64_t>(128) * 1024 * 1024; // 128MB
+	static constexpr uint64_t SEQUENTIAL_THRESHOLD = static_cast<uint64_t>(64) * 1024;       // 64KB gap tolerance
+
 	ClientContext &context;
 	string path;
 	unique_ptr<CachingFileHandle> caching_handle;
@@ -48,11 +53,6 @@ private:
 	sqlite3_int64 last_read_offset = -1;     // Track last read position
 	sqlite3_int64 last_read_end = -1;        // End of last read (offset + amount)
 	uint64_t current_readahead_size = MIN_READAHEAD_SIZE;    // Current read-ahead block size
-	
-	// Adaptive read-ahead constants
-	static constexpr uint64_t MIN_READAHEAD_SIZE = static_cast<uint64_t>(1024) * 1024;       // 1MB
-	static constexpr uint64_t MAX_READAHEAD_SIZE = static_cast<uint64_t>(128) * 1024 * 1024; // 128MB
-	static constexpr uint64_t SEQUENTIAL_THRESHOLD = static_cast<uint64_t>(64) * 1024;       // 64KB gap tolerance
 	
 	// Helper methods for adaptive read-ahead
 	uint64_t CalculateReadAheadSize(sqlite3_int64 offset, int amount) const;
