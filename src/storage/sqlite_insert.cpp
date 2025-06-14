@@ -191,7 +191,7 @@ PhysicalOperator &SQLiteCatalog::PlanInsert(ClientContext &context, PhysicalPlan
 	D_ASSERT(plan);
 	auto &inner_plan = AddCastToSQLiteTypes(context, planner, *plan);
 	auto &insert = planner.Make<SQLiteInsert>(op, op.table, op.column_index_map);
-	insert.children.push_back(*plan);
+	insert.children.push_back(inner_plan);
 	return insert;
 }
 

@@ -1,0 +1,20 @@
+# name: test/sql/scanner/http_sqlite_08_error_handling.test
+# description: Error handling for remote SQLite databases
+# group: [sqlite_scanner]
+
+require sqlite_scanner
+
+statement ok
+INSTALL httpfs;
+
+statement ok
+LOAD httpfs;
+
+# Test 11: Error handling - non-existent URL
+# Note: Error message varies by platform due to different HTTP client implementations
+# macOS: "Connection Error: Unable to open database"
+# Linux: "HTTP Error" with detailed JSON
+statement error
+SELECT * FROM sqlite_scan('https://example.com/non-existent-database.db', 'test');
+----
+Error

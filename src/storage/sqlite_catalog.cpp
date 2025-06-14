@@ -2,25 +2,28 @@
 #include "duckdb/parser/parsed_data/create_schema_info.hpp"
 #include "duckdb/storage/database_size.hpp"
 #include "sqlite_db.hpp"
+#include "sqlite_duckdb_vfs_cache.hpp"
 #include "storage/sqlite_schema_entry.hpp"
 #include "storage/sqlite_transaction.hpp"
 #include "duckdb/common/exception/transaction_exception.hpp"
+#include "duckdb/common/file_system.hpp"
 
 namespace duckdb {
 
 SQLiteCatalog::SQLiteCatalog(AttachedDatabase &db_p, const string &path, SQLiteOpenOptions options_p)
-    : Catalog(db_p), path(path), options(std::move(options_p)), in_memory(path == ":memory:"), active_in_memory(false) {
-	if (InMemory()) {
-		in_memory_db = SQLiteDB::Open(path, options, true);
-	}
+    : Catalog(db_p), path(path), options(std::move(options_p)), in_memory(path == ":memory:"), active_in_memory(false), in_memory_db_initialized(false) {
+
 }
 
 SQLiteCatalog::~SQLiteCatalog() {
+
 }
 
 void SQLiteCatalog::Initialize(bool load_builtin) {
+
 	CreateSchemaInfo info;
 	main_schema = make_uniq<SQLiteSchemaEntry>(*this, info);
+
 }
 
 optional_ptr<CatalogEntry> SQLiteCatalog::CreateSchema(CatalogTransaction transaction, CreateSchemaInfo &info) {
@@ -52,11 +55,17 @@ string SQLiteCatalog::GetDBPath() {
 	return path;
 }
 
-SQLiteDB *SQLiteCatalog::GetInMemoryDatabase() {
+SQLiteDB *SQLiteCatalog::GetInMemoryDatabase(ClientContext &context) {
 	if (!InMemory()) {
 		throw InternalException("GetInMemoryDatabase() called on a non-in-memory database");
 	}
 	lock_guard<mutex> l(in_memory_lock);
+	if (!in_memory_db_initialized) {
+		// Initialize the database connection on first use.
+		// The unified Open method handles both local and remote files.
+		in_memory_db = SQLiteDB::Open(path, options, context, true);
+		in_memory_db_initialized = true;
+	}
 	if (active_in_memory) {
 		throw TransactionException("Only a single transaction can be active on an "
 		                           "in-memory SQLite database at a time");

@@ -8,9 +8,10 @@
 
 #pragma once
 
-#include "duckdb/transaction/transaction.hpp"
-#include "duckdb/common/case_insensitive_map.hpp"
 #include "sqlite_db.hpp"
+#include "duckdb/common/case_insensitive_map.hpp"
+#include "duckdb/common/mutex.hpp"
+#include "duckdb/transaction/transaction.hpp"
 
 namespace duckdb {
 class SQLiteCatalog;
@@ -37,6 +38,10 @@ private:
 	SQLiteDB *db;
 	SQLiteDB owned_db;
 	case_insensitive_map_t<unique_ptr<CatalogEntry>> catalog_entries;
+	bool started;
+	
+	// Function-local static mutex to avoid Windows DLL initialization issues
+	static mutex& GetInitializationMutex();
 };
 
 } // namespace duckdb

@@ -4,13 +4,15 @@
 #include "duckdb.hpp"
 
 #include "sqlite_db.hpp"
+#include "sqlite_duckdb_vfs_cache.hpp"
 #include "sqlite_scanner.hpp"
-#include "sqlite_storage.hpp"
 #include "sqlite_scanner_extension.hpp"
+#include "sqlite_storage.hpp"
 
 #include "duckdb/catalog/catalog.hpp"
 #include "duckdb/main/extension_util.hpp"
 #include "duckdb/parser/parsed_data/create_table_function_info.hpp"
+#include "duckdb/planner/extension_callback.hpp"
 
 using namespace duckdb;
 
@@ -20,15 +22,32 @@ static void SetSqliteDebugQueryPrint(ClientContext &context, SetScope scope, Val
 	SQLiteDB::DebugSetPrintQueries(BooleanValue::Get(parameter));
 }
 
+// Cleanup callback for VFS when connection is closed
+class SQLiteVFSCleanupCallback : public ExtensionCallback {
+public:
+	void OnConnectionClosed(ClientContext &context) override {
+		// Unregister the VFS for this context if it was registered
+		SQLiteDuckDBCacheVFS::Unregister(context);
+	}
+};
+
 static void LoadInternal(DatabaseInstance &db) {
-	SqliteScanFunction sqlite_fun;
-	ExtensionUtil::RegisterFunction(db, sqlite_fun);
+	// Create function instances inline like built-in functions do
+	// This avoids any static storage issues
+	{
+		SqliteScanFunction sqlite_scan;
+		ExtensionUtil::RegisterFunction(db, sqlite_scan);
+	}
 
-	SqliteAttachFunction attach_func;
-	ExtensionUtil::RegisterFunction(db, attach_func);
+	{
+		SqliteAttachFunction sqlite_attach;
+		ExtensionUtil::RegisterFunction(db, sqlite_attach);
+	}
 
-	SQLiteQueryFunction query_func;
-	ExtensionUtil::RegisterFunction(db, query_func);
+	{
+		SQLiteQueryFunction sqlite_query;
+		ExtensionUtil::RegisterFunction(db, sqlite_query);
+	}
 
 	auto &config = DBConfig::GetConfig(db);
 	config.AddExtensionOption("sqlite_all_varchar", "Load all SQLite columns as VARCHAR columns", LogicalType::BOOLEAN);
@@ -36,7 +55,15 @@ static void LoadInternal(DatabaseInstance &db) {
 	config.AddExtensionOption("sqlite_debug_show_queries", "DEBUG SETTING: print all queries sent to SQLite to stdout",
 	                          LogicalType::BOOLEAN, Value::BOOLEAN(false), SetSqliteDebugQueryPrint);
 
-	config.storage_extensions["sqlite_scanner"] = make_uniq<SQLiteStorageExtension>();
+	// Only register storage extension if not already present
+	if (config.storage_extensions.find("sqlite_scanner") == config.storage_extensions.end()) {
+		config.storage_extensions["sqlite_scanner"] = make_uniq<SQLiteStorageExtension>();
+	}
+	
+	// Register cleanup callback for VFS
+	config.extension_callbacks.push_back(make_uniq<SQLiteVFSCleanupCallback>());
+	
+	// HTTP SQLite support is handled entirely by VFS through DuckDB's CachingFileSystem
 }
 
 void SqliteScannerExtension::Load(DuckDB &db) {
@@ -44,7 +71,13 @@ void SqliteScannerExtension::Load(DuckDB &db) {
 }
 
 DUCKDB_EXTENSION_API void sqlite_scanner_init(duckdb::DatabaseInstance &db) {
-	LoadInternal(db);
+	try {
+		LoadInternal(db);
+	} catch (const std::exception &e) {
+		throw;
+	} catch (...) {
+		throw;
+	}
 }
 
 DUCKDB_EXTENSION_API const char *sqlite_scanner_version() {
@@ -52,6 +85,9 @@ DUCKDB_EXTENSION_API const char *sqlite_scanner_version() {
 }
 
 DUCKDB_EXTENSION_API void sqlite_scanner_storage_init(DBConfig &config) {
-	config.storage_extensions["sqlite_scanner"] = make_uniq<SQLiteStorageExtension>();
+	// Only register if not already present
+	if (config.storage_extensions.find("sqlite_scanner") == config.storage_extensions.end()) {
+		config.storage_extensions["sqlite_scanner"] = make_uniq<SQLiteStorageExtension>();
+	}
 }
 }

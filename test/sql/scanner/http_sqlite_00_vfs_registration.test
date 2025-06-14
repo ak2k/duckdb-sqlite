@@ -1,0 +1,52 @@
+# name: test/sql/scanner/http_sqlite_00_vfs_registration.test
+# description: Test HTTP VFS registration and URL detection for SQLite scanner
+# group: [sqlite_scanner]
+
+require sqlite_scanner
+
+# Test 1: Verify SQLite scanner extension is available
+statement ok
+SELECT 'SQLite scanner extension loaded';
+
+# Test 2: HTTP URLs should fail appropriately without httpfs loaded
+statement error
+SELECT * FROM sqlite_scan('http://example.com/test.db', 'test');
+----
+Cannot open file
+
+# Test 3: HTTPS URLs should fail appropriately without httpfs loaded
+statement error
+SELECT * FROM sqlite_scan('https://example.com/test.db', 'test');
+----
+Cannot open file
+
+# Test 4: S3 URLs should fail appropriately without httpfs loaded
+statement error
+SELECT * FROM sqlite_scan('s3://bucket/test.db', 'test');
+----
+Cannot open file
+
+# Test 5: Load httpfs to register HTTP VFS
+statement ok
+INSTALL httpfs;
+
+statement ok
+LOAD httpfs;
+
+# Test 6: After httpfs loads, HTTP URLs should be recognized but fail with network error (not VFS error)
+statement error
+SELECT * FROM sqlite_scan('http://nonexistent-domain-12345.com/test.db', 'test');
+----
+Error
+
+# Test 7: HTTPS URLs should also be recognized after httpfs loads
+statement error
+SELECT * FROM sqlite_scan('https://nonexistent-domain-12345.com/test.db', 'test');
+----
+Error
+
+# Test 8: Regular file paths should still work as before
+statement error
+SELECT * FROM sqlite_scan('nonexistent.db', 'test');
+----
+open

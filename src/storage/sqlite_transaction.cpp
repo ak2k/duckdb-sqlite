@@ -3,45 +3,77 @@
 #include "storage/sqlite_index_entry.hpp"
 #include "storage/sqlite_schema_entry.hpp"
 #include "storage/sqlite_table_entry.hpp"
-#include "duckdb/parser/parsed_data/create_table_info.hpp"
-#include "duckdb/parser/parsed_data/create_view_info.hpp"
 #include "duckdb/catalog/catalog_entry/index_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/view_catalog_entry.hpp"
-#include "duckdb/parser/parsed_data/create_view_info.hpp"
-#include "duckdb/parser/statement/create_statement.hpp"
-#include "duckdb/parser/parser.hpp"
-#include "duckdb/parser/parsed_expression_iterator.hpp"
 #include "duckdb/parser/expression/columnref_expression.hpp"
+#include "duckdb/parser/parsed_data/create_table_info.hpp"
+#include "duckdb/parser/parsed_data/create_view_info.hpp"
+#include "duckdb/parser/parsed_expression_iterator.hpp"
+#include "duckdb/parser/parser.hpp"
+#include "duckdb/parser/statement/create_statement.hpp"
 
 namespace duckdb {
 
+// Function-local static mutex to avoid Windows DLL initialization issues
+mutex& SQLiteTransaction::GetInitializationMutex() {
+	static mutex initialization_mutex;
+	return initialization_mutex;
+}
+
 SQLiteTransaction::SQLiteTransaction(SQLiteCatalog &sqlite_catalog, TransactionManager &manager, ClientContext &context)
-    : Transaction(manager, context), sqlite_catalog(sqlite_catalog) {
-	if (sqlite_catalog.InMemory()) {
-		// in-memory database - get a reference to the in-memory connection
-		db = sqlite_catalog.GetInMemoryDatabase();
-	} else {
-		// on-disk database - open a new database connection
-		owned_db = SQLiteDB::Open(sqlite_catalog.path, sqlite_catalog.options, true);
-		db = &owned_db;
-	}
+    : Transaction(manager, context), sqlite_catalog(sqlite_catalog), db(nullptr), started(false) {
+
+	// Database connection and transaction start are deferred to prevent potential deadlocks.
+	// Opening SQLite connections for remote files can trigger HTTP requests and caching
+	// operations while the MetaTransaction lock is held, which could cause deadlocks.
+	// Both connection and transaction are initialized lazily in GetDB() when first needed.
 }
 
 SQLiteTransaction::~SQLiteTransaction() {
+
 	sqlite_catalog.ReleaseInMemoryDatabase();
 }
 
 void SQLiteTransaction::Start() {
-	db->Execute("BEGIN TRANSACTION");
+
+	if (!started) {
+		GetDB(); // This will handle both connection and transaction start
+	}
 }
 void SQLiteTransaction::Commit() {
-	db->Execute("COMMIT");
+	GetDB().Execute("COMMIT");
 }
 void SQLiteTransaction::Rollback() {
-	db->Execute("ROLLBACK");
+	GetDB().Execute("ROLLBACK");
 }
 
 SQLiteDB &SQLiteTransaction::GetDB() {
+
+	// Use double-checked locking to avoid mutex acquisition on every call
+	// (The mutex itself is safely initialized via function-local static)
+	if (!db || !started) {
+		lock_guard<mutex> lock(GetInitializationMutex());
+		
+		// Check again after acquiring lock (double-checked locking)
+		if (!db) {
+
+			if (sqlite_catalog.InMemory()) {
+				// in-memory database - get a reference to the in-memory connection
+				db = sqlite_catalog.GetInMemoryDatabase(*context.lock());
+			} else {
+				// on-disk/remote database - open a new database connection
+				owned_db = SQLiteDB::Open(sqlite_catalog.path, sqlite_catalog.options, *context.lock(), true);
+				db = &owned_db;
+			}
+		}
+		
+		// Also handle deferred transaction start
+		if (!started) {
+			db->Execute("BEGIN TRANSACTION");
+			started = true;
+		}
+	}
+	
 	return *db;
 }
 
@@ -111,7 +143,7 @@ optional_ptr<CatalogEntry> SQLiteTransaction::GetCatalogEntry(const string &entr
 		return entry->second.get();
 	}
 	// catalog entry not found - look up table in main SQLite database
-	auto type = db->GetEntryType(entry_name);
+	auto type = GetDB().GetEntryType(entry_name);
 	if (type == CatalogType::INVALID) {
 		// no table or view found
 		return nullptr;
@@ -125,7 +157,7 @@ optional_ptr<CatalogEntry> SQLiteTransaction::GetCatalogEntry(const string &entr
 		if (context.lock()->TryGetCurrentSetting("sqlite_all_varchar", sqlite_all_varchar)) {
 			all_varchar = BooleanValue::Get(sqlite_all_varchar);
 		}
-		db->GetTableInfo(entry_name, info.columns, info.constraints, all_varchar);
+		GetDB().GetTableInfo(entry_name, info.columns, info.constraints, all_varchar);
 		D_ASSERT(!info.columns.empty());
 
 		result = make_uniq<SQLiteTableEntry>(sqlite_catalog, sqlite_catalog.GetMainSchema(), info, all_varchar);
@@ -133,7 +165,7 @@ optional_ptr<CatalogEntry> SQLiteTransaction::GetCatalogEntry(const string &entr
 	}
 	case CatalogType::VIEW_ENTRY: {
 		string sql;
-		db->GetViewInfo(entry_name, sql);
+		GetDB().GetViewInfo(entry_name, sql);
 
 		unique_ptr<CreateViewInfo> view_info;
 		try {
@@ -153,7 +185,7 @@ optional_ptr<CatalogEntry> SQLiteTransaction::GetCatalogEntry(const string &entr
 	case CatalogType::INDEX_ENTRY: {
 		string table_name;
 		string sql;
-		db->GetIndexInfo(entry_name, sql, table_name);
+		GetDB().GetIndexInfo(entry_name, sql, table_name);
 		if (sql.empty()) {
 			throw InternalException("SQL is empty");
 		}
@@ -200,7 +232,7 @@ string GetDropSQL(CatalogType type, const string &table_name, bool cascade) {
 
 void SQLiteTransaction::DropEntry(CatalogType type, const string &table_name, bool cascade) {
 	catalog_entries.erase(table_name);
-	db->Execute(GetDropSQL(type, table_name, cascade));
+	GetDB().Execute(GetDropSQL(type, table_name, cascade));
 }
 
 } // namespace duckdb

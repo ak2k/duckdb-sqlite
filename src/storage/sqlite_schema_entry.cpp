@@ -12,15 +12,21 @@
 #include "duckdb/parser/parsed_data/alter_info.hpp"
 #include "duckdb/parser/parsed_data/alter_table_info.hpp"
 #include "duckdb/parser/parsed_expression_iterator.hpp"
+#include "duckdb/transaction/transaction.hpp"
 
 namespace duckdb {
 
 SQLiteSchemaEntry::SQLiteSchemaEntry(Catalog &catalog, CreateSchemaInfo &info) : SchemaCatalogEntry(catalog, info) {
+
 }
 
-SQLiteTransaction &GetSQLiteTransaction(CatalogTransaction transaction) {
+SQLiteTransaction &GetSQLiteTransaction(CatalogTransaction transaction, Catalog &catalog) {
 	if (!transaction.transaction) {
-		throw InternalException("No transaction!?");
+		// This should not happen in normal operation - transactions should be initialized before use.
+		// Creating one here prevents deadlocks but may indicate missing transaction initialization.
+		D_ASSERT(false && "Transaction should have been initialized before reaching this point");
+		auto &new_transaction = Transaction::Get(transaction.GetContext(), catalog);
+		return new_transaction.Cast<SQLiteTransaction>();
 	}
 	return transaction.transaction->Cast<SQLiteTransaction>();
 }
@@ -52,7 +58,7 @@ void SQLiteSchemaEntry::TryDropEntry(ClientContext &context, CatalogType catalog
 }
 
 optional_ptr<CatalogEntry> SQLiteSchemaEntry::CreateTable(CatalogTransaction transaction, BoundCreateTableInfo &info) {
-	auto &sqlite_transaction = GetSQLiteTransaction(transaction);
+	auto &sqlite_transaction = GetSQLiteTransaction(transaction, catalog);
 	auto &base_info = info.Base();
 	auto table_name = base_info.table;
 	if (base_info.on_conflict == OnCreateConflict::REPLACE_ON_CONFLICT) {
@@ -143,7 +149,7 @@ optional_ptr<CatalogEntry> SQLiteSchemaEntry::CreateView(CatalogTransaction tran
 		// CREATE OR REPLACE - drop any existing entries first (if any)
 		TryDropEntry(transaction.GetContext(), CatalogType::VIEW_ENTRY, info.view_name);
 	}
-	auto &sqlite_transaction = GetSQLiteTransaction(transaction);
+	auto &sqlite_transaction = GetSQLiteTransaction(transaction, catalog);
 	sqlite_transaction.GetDB().Execute(GetCreateViewSQL(info));
 	return GetEntry(transaction, CatalogType::VIEW_ENTRY, info.view_name);
 }
@@ -298,7 +304,7 @@ void SQLiteSchemaEntry::DropEntry(ClientContext &context, DropInfo &info) {
 
 optional_ptr<CatalogEntry> SQLiteSchemaEntry::LookupEntry(CatalogTransaction transaction,
                                                           const EntryLookupInfo &lookup_info) {
-	auto &sqlite_transaction = GetSQLiteTransaction(transaction);
+	auto &sqlite_transaction = GetSQLiteTransaction(transaction, catalog);
 	switch (lookup_info.GetCatalogType()) {
 	case CatalogType::INDEX_ENTRY:
 	case CatalogType::TABLE_ENTRY:

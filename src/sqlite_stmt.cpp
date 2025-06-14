@@ -1,28 +1,39 @@
 #include "sqlite_stmt.hpp"
 #include "sqlite_db.hpp"
 #include "sqlite_scanner.hpp"
+#include "duckdb/common/swap.hpp"
 
 namespace duckdb {
 
 SQLiteStatement::SQLiteStatement() : db(nullptr), stmt(nullptr) {
+
 }
 
 SQLiteStatement::SQLiteStatement(sqlite3 *db, sqlite3_stmt *stmt) : db(db), stmt(stmt) {
 	D_ASSERT(db);
+
 }
 
 SQLiteStatement::~SQLiteStatement() {
+
 	Close();
 }
 
-SQLiteStatement::SQLiteStatement(SQLiteStatement &&other) noexcept {
-	std::swap(db, other.db);
-	std::swap(stmt, other.stmt);
+SQLiteStatement::SQLiteStatement(SQLiteStatement &&other) noexcept : db(nullptr), stmt(nullptr) {
+
+	swap(db, other.db);
+	swap(stmt, other.stmt);
+
 }
 
 SQLiteStatement &SQLiteStatement::operator=(SQLiteStatement &&other) noexcept {
-	std::swap(db, other.db);
-	std::swap(stmt, other.stmt);
+
+	if (this != &other) {
+		Close();
+		std::swap(db, other.db);
+		std::swap(stmt, other.stmt);
+	}
+
 	return *this;
 }
 
@@ -58,12 +69,16 @@ bool SQLiteStatement::IsOpen() {
 }
 
 void SQLiteStatement::Close() {
+
 	if (!IsOpen()) {
+
 		return;
 	}
 	sqlite3_finalize(stmt);
+
 	db = nullptr;
 	stmt = nullptr;
+
 }
 
 void SQLiteStatement::CheckTypeMatches(const SqliteBindData &bind_data, sqlite3_value *val, int sqlite_column_type,

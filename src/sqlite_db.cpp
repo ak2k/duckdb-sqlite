@@ -1,76 +1,179 @@
+#include "sqlite_db.hpp"
+#include "sqlite_duckdb_vfs_cache.hpp"
+#include "sqlite_stmt.hpp"
+
+#include "duckdb/common/exception.hpp"
+#include "duckdb/common/exception/http_exception.hpp"
+#include "duckdb/common/file_open_flags.hpp"
+#include "duckdb/common/swap.hpp"
+#include "duckdb/main/client_context.hpp"
+#include "duckdb/parser/column_list.hpp"
 #include "duckdb/parser/constraints/not_null_constraint.hpp"
 #include "duckdb/parser/constraints/unique_constraint.hpp"
 #include "duckdb/parser/expression/constant_expression.hpp"
-#include "duckdb/storage/table_storage_info.hpp"
-#include "duckdb/parser/column_list.hpp"
 #include "duckdb/parser/parser.hpp"
-#include "sqlite_db.hpp"
-#include "sqlite_stmt.hpp"
+#include "duckdb/storage/table_storage_info.hpp"
 
 namespace duckdb {
 
 static bool debug_sqlite_print_queries = false;
 
 SQLiteDB::SQLiteDB() : db(nullptr) {
+
 }
 
 SQLiteDB::SQLiteDB(sqlite3 *db) : db(db) {
 }
 
 SQLiteDB::~SQLiteDB() {
+
 	Close();
+
 }
 
-SQLiteDB::SQLiteDB(SQLiteDB &&other) noexcept {
-	std::swap(db, other.db);
+SQLiteDB::SQLiteDB(SQLiteDB &&other) noexcept : db(nullptr) {
+
+	swap(db, other.db);
+
 }
 
 SQLiteDB &SQLiteDB::operator=(SQLiteDB &&other) noexcept {
-	std::swap(db, other.db);
+
+	if (this != &other) {
+		// Close any existing database first
+		Close();
+		swap(db, other.db);
+	}
+
 	return *this;
 }
 
-SQLiteDB SQLiteDB::Open(const string &path, const SQLiteOpenOptions &options, bool is_shared) {
-	SQLiteDB result;
+int SQLiteDB::GetOpenFlags(const SQLiteOpenOptions &options, bool is_shared, bool is_remote) {
 	int flags = SQLITE_OPEN_PRIVATECACHE;
-	if (options.access_mode == AccessMode::READ_ONLY) {
+	
+	if (is_remote || options.access_mode == AccessMode::READ_ONLY) {
+		// Remote databases are always read-only
 		flags |= SQLITE_OPEN_READONLY;
 	} else {
 		flags |= SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE;
 	}
+	
 	if (!is_shared) {
+		// Disable SQLite's internal mutex for single-threaded access.
+		// Each connection should only be used by one thread at a time.
 		// FIXME: we should just make sure we are not re-using the same `sqlite3`
 		// object across threads
 		flags |= SQLITE_OPEN_NOMUTEX;
 	}
+	
 	flags |= SQLITE_OPEN_EXRESCODE;
-	auto rc = sqlite3_open_v2(path.c_str(), &result.db, flags, nullptr);
-	if (rc != SQLITE_OK) {
-		throw std::runtime_error("Unable to open database \"" + path + "\": " + string(sqlite3_errstr(rc)));
-	}
-	// default busy time-out of 5 seconds
+	return flags;
+}
+
+void SQLiteDB::ApplyBusyTimeout(sqlite3 *db, const SQLiteOpenOptions &options) {
 	if (options.busy_timeout > 0) {
 		if (options.busy_timeout > NumericLimits<int>::Maximum()) {
-			throw std::runtime_error("busy_timeout out of range - must be within "
-			                         "valid range for type int");
+			throw BinderException("busy_timeout out of range - must be within valid range for type int");
 		}
-		rc = sqlite3_busy_timeout(result.db, int(options.busy_timeout));
+		auto rc = sqlite3_busy_timeout(db, int(options.busy_timeout));
 		if (rc != SQLITE_OK) {
-			throw std::runtime_error("Failed to set busy timeout");
+			throw ConnectionException("Failed to set busy timeout: %s", sqlite3_errmsg(db));
 		}
 	}
+}
+
+void SQLiteDB::HandleOpenError(const string &path, int rc, ClientContext *context) {
+	// If we have a context, try to get a more specific error message
+	if (context) {
+		try {
+			// Attempt to open the file through DuckDB's filesystem to get better error messages.
+			auto &fs = context->db->GetFileSystem();
+			auto file_handle = fs.OpenFile(path, FileFlags::FILE_FLAGS_READ);
+		} catch (const HTTPException &e) {
+			// Re-throw HTTP errors with their original context
+			throw;
+		} catch (const Exception &e) {
+			// Re-throw other DuckDB exceptions as-is
+			throw;
+		} catch (...) {
+			// Fall back to SQLite's error message
+			throw ConnectionException("Unable to open database \"%s\": %s", path, sqlite3_errstr(rc));
+		}
+		
+		// If OpenFile succeeded but SQLite failed, report SQLite's error
+		throw ConnectionException("Unable to open database \"%s\": %s", path, sqlite3_errstr(rc));
+	} else {
+		// No context available, just throw SQLite's error
+		throw ConnectionException("Unable to open database \"%s\": %s", path, sqlite3_errstr(rc));
+	}
+}
+
+// Opens a local SQLite database file using standard SQLite file handling
+SQLiteDB SQLiteDB::OpenLocal(const string &path, const SQLiteOpenOptions &options, bool is_shared) {
+	SQLiteDB result;
+	int flags = GetOpenFlags(options, is_shared, false);
+	
+	auto rc = sqlite3_open_v2(path.c_str(), &result.db, flags, nullptr);
+	if (rc != SQLITE_OK) {
+		HandleOpenError(path, rc);
+	}
+	
+	ApplyBusyTimeout(result.db, options);
+	
 	if (!options.journal_mode.empty()) {
 		result.Execute("PRAGMA journal_mode=" + KeywordHelper::EscapeQuotes(options.journal_mode, '\''));
 	}
 	return result;
 }
 
+// Opens a remote SQLite database using DuckDB's custom VFS for HTTP/HTTPS support
+SQLiteDB SQLiteDB::OpenWithVFS(const string &path, const SQLiteOpenOptions &options, ClientContext &context, bool is_shared) {
+	// Register our VFS to handle this remote file
+	SQLiteDuckDBCacheVFS::Register(context);
+	
+	SQLiteDB result;
+	int flags = GetOpenFlags(options, is_shared, true);
+	
+	auto rc = sqlite3_open_v2(path.c_str(), &result.db, flags, SQLiteDuckDBCacheVFS::GetVFSNameForContext(context));
+	if (rc != SQLITE_OK) {
+		HandleOpenError(path, rc, &context);
+	}
+	
+	ApplyBusyTimeout(result.db, options);
+	
+	return result;
+}
+
+// Main entry point for opening SQLite databases - handles both local and remote files
+// Remote files (HTTP/HTTPS) use DuckDB's VFS with caching, local files use standard SQLite
+SQLiteDB SQLiteDB::Open(const string &path, const SQLiteOpenOptions &options, ClientContext &context, bool is_shared) {
+	if (FileSystem::IsRemoteFile(path)) {
+		if (SQLiteDuckDBCacheVFS::CanHandlePath(context, path)) {
+			return OpenWithVFS(path, options, context, is_shared);
+		} else {
+			// Path not supported by our VFS - use standard SQLite
+			return OpenLocal(path, options, is_shared);
+		}
+	} else {
+		// Local files use standard SQLite file handling
+		return OpenLocal(path, options, is_shared);
+	}
+}
+
+void SQLiteDB::CheckDBValid(sqlite3 *db) {
+	if (!db) {
+		throw InternalException("SQLite database operation called with null database pointer");
+	}
+}
+
 bool SQLiteDB::TryPrepare(const string &query, SQLiteStatement &stmt) {
+	CheckDBValid(db);
 	stmt.db = db;
 	if (debug_sqlite_print_queries) {
 		Printer::Print(query + "\n");
 	}
 	auto rc = sqlite3_prepare_v2(db, query.c_str(), -1, &stmt.stmt, nullptr);
+
 	if (rc != SQLITE_OK) {
 		return false;
 	}
@@ -80,20 +183,19 @@ bool SQLiteDB::TryPrepare(const string &query, SQLiteStatement &stmt) {
 SQLiteStatement SQLiteDB::Prepare(const string &query) {
 	SQLiteStatement stmt;
 	if (!TryPrepare(query, stmt)) {
-		string error = "Failed to prepare query \"" + query + "\": " + string(sqlite3_errmsg(db));
-		throw std::runtime_error(error);
+		throw BinderException("Failed to prepare query \"%s\": %s", query, sqlite3_errmsg(db));
 	}
 	return stmt;
 }
 
 void SQLiteDB::Execute(const string &query) {
+	CheckDBValid(db);
 	if (debug_sqlite_print_queries) {
 		Printer::Print(query + "\n");
 	}
 	auto rc = sqlite3_exec(db, query.c_str(), nullptr, nullptr, nullptr);
 	if (rc != SQLITE_OK) {
-		string error = "Failed to execute query \"" + query + "\": " + string(sqlite3_errmsg(db));
-		throw std::runtime_error(error);
+		throw IOException("Failed to execute query \"%s\": %s", query, sqlite3_errmsg(db));
 	}
 }
 
@@ -102,14 +204,18 @@ bool SQLiteDB::IsOpen() {
 }
 
 void SQLiteDB::Close() {
+
 	if (!IsOpen()) {
+
 		return;
 	}
 	auto rc = sqlite3_close_v2(db);
+
 	if (rc == SQLITE_BUSY) {
 		throw InternalException("Failed to close database - SQLITE_BUSY");
 	}
 	db = nullptr;
+
 }
 
 vector<string> SQLiteDB::GetEntries(string entry_type) {
@@ -155,7 +261,7 @@ void SQLiteDB::GetIndexInfo(const string &index_name, string &sql, string &table
 		sql = stmt.GetValue<string>(1);
 		return;
 	}
-	throw InternalException("GetViewInfo - index \"%s\" not found", index_name);
+	throw InternalException("GetIndexInfo - index \"%s\" not found", index_name);
 }
 
 void SQLiteDB::GetViewInfo(const string &view_name, string &sql) {

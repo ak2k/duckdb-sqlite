@@ -1,19 +1,21 @@
 #include "duckdb.hpp"
 
 #include "sqlite_db.hpp"
-#include "sqlite_stmt.hpp"
 #include "sqlite_scanner.hpp"
-#include <stdint.h>
-#include "duckdb/parser/parser.hpp"
-#include "duckdb/parser/expression/cast_expression.hpp"
+#include "sqlite_stmt.hpp"
+
+#include "duckdb/common/operator/cast_operators.hpp"
 #include "duckdb/common/types/date.hpp"
 #include "duckdb/common/types/timestamp.hpp"
-#include "duckdb/storage/table/row_group.hpp"
 #include "duckdb/main/client_context.hpp"
 #include "duckdb/main/config.hpp"
+#include "duckdb/parser/expression/cast_expression.hpp"
+#include "duckdb/parser/parser.hpp"
 #include "duckdb/storage/storage_extension.hpp"
-#include "duckdb/common/operator/cast_operators.hpp"
+#include "duckdb/storage/table/row_group.hpp"
+
 #include <cmath>
+#include <stdint.h>
 
 namespace duckdb {
 
@@ -55,7 +57,7 @@ static unique_ptr<FunctionData> SqliteBind(ClientContext &context, TableFunction
 	SQLiteStatement stmt;
 	SQLiteOpenOptions options;
 	options.access_mode = AccessMode::READ_ONLY;
-	db = SQLiteDB::Open(result->file_name, options);
+	db = SQLiteDB::Open(result->file_name, options, context);
 
 	ColumnList columns;
 	vector<unique_ptr<Constraint>> constraints;
@@ -72,7 +74,7 @@ static unique_ptr<FunctionData> SqliteBind(ClientContext &context, TableFunction
 	}
 
 	if (names.empty()) {
-		throw std::runtime_error("no columns for table " + result->table_name);
+		throw BinderException("Table \"%s\" has no columns", result->table_name);
 	}
 
 	if (!db.GetRowIdInfo(result->table_name, result->row_id_info)) {
@@ -81,6 +83,7 @@ static unique_ptr<FunctionData> SqliteBind(ClientContext &context, TableFunction
 
 	result->names = names;
 	result->types = return_types;
+	result->global_db = nullptr;  // Initialize to prevent undefined behavior
 
 	return std::move(result);
 }
@@ -96,7 +99,7 @@ static void SqliteInitInternal(ClientContext &context, const SqliteBindData &bin
 	if (!local_state.db) {
 		SQLiteOpenOptions options;
 		options.access_mode = AccessMode::READ_ONLY;
-		local_state.owned_db = SQLiteDB::Open(bind_data.file_name.c_str(), options);
+		local_state.owned_db = SQLiteDB::Open(bind_data.file_name.c_str(), options, context);
 		local_state.db = &local_state.owned_db;
 	}
 	string sql;
@@ -122,7 +125,13 @@ static void SqliteInitInternal(ClientContext &context, const SqliteBindData &bin
 	} else {
 		sql = bind_data.sql;
 	}
-	local_state.stmt = local_state.db->Prepare(sql.c_str());
+	try {
+		local_state.stmt = local_state.db->Prepare(sql.c_str());
+	} catch (const std::exception& e) {
+		throw;
+	} catch (...) {
+		throw;
+	}
 }
 
 static unique_ptr<NodeStatistics> SqliteCardinality(ClientContext &context, const FunctionData *bind_data_p) {
@@ -313,7 +322,7 @@ static void SqliteScan(ClientContext &context, TableFunctionInput &data, DataChu
 					    out_vec, (const char *)sqlite3_value_blob(val), sqlite3_value_bytes(val));
 					break;
 				default:
-					throw std::runtime_error(out_vec.GetType().ToString());
+					throw InternalException("Unsupported type \"%s\" for SQLite value conversion", out_vec.GetType().ToString());
 				}
 			}
 			out_idx++;
@@ -365,6 +374,23 @@ struct AttachFunctionData : public TableFunctionData {
 	bool finished = false;
 	bool overwrite = false;
 	string file_name = "";
+
+	// Override virtual methods from FunctionData
+	unique_ptr<FunctionData> Copy() const override {
+		auto result = make_uniq<AttachFunctionData>();
+		result->finished = finished;
+		result->overwrite = overwrite;
+		result->file_name = file_name;
+		result->column_ids = column_ids;
+		return std::move(result);
+	}
+
+	bool Equals(const FunctionData &other) const override {
+		auto &other_attach = other.Cast<AttachFunctionData>();
+		return finished == other_attach.finished &&
+		       overwrite == other_attach.overwrite &&
+		       file_name == other_attach.file_name;
+	}
 };
 
 static unique_ptr<FunctionData> AttachBind(ClientContext &context, TableFunctionBindInput &input,
@@ -392,7 +418,7 @@ static void AttachFunction(ClientContext &context, TableFunctionInput &data_p, D
 
 	SQLiteOpenOptions options;
 	options.access_mode = AccessMode::READ_ONLY;
-	SQLiteDB db = SQLiteDB::Open(data.file_name, options);
+	SQLiteDB db = SQLiteDB::Open(data.file_name, options, context);
 	auto dconn = Connection(context.db->GetDatabase(context));
 	{
 		auto tables = db.GetTables();
@@ -414,6 +440,49 @@ static void AttachFunction(ClientContext &context, TableFunctionInput &data_p, D
 SqliteAttachFunction::SqliteAttachFunction()
     : TableFunction("sqlite_attach", {LogicalType::VARCHAR}, AttachFunction, AttachBind) {
 	named_parameters["overwrite"] = LogicalType::BOOLEAN;
+}
+
+// SqliteBindData method implementations
+unique_ptr<FunctionData> SqliteBindData::Copy() const {
+	auto result = make_uniq<SqliteBindData>();
+	result->file_name = file_name;
+	result->table_name = table_name;
+	result->names = names;
+	result->types = types;
+	result->sql = sql;
+	result->row_id_info = row_id_info;
+	result->all_varchar = all_varchar;
+	result->rows_per_group = rows_per_group;
+	result->global_db = global_db;
+	result->table = table;
+	// Copy the column_ids from the base class
+	result->column_ids = column_ids;
+	return std::move(result);
+}
+
+bool SqliteBindData::Equals(const FunctionData &other) const {
+	auto &other_bind = other.Cast<SqliteBindData>();
+	if (file_name != other_bind.file_name) {
+		return false;
+	}
+	if (table_name != other_bind.table_name) {
+		return false;
+	}
+	if (sql != other_bind.sql) {
+		return false;
+	}
+	if (all_varchar != other_bind.all_varchar) {
+		return false;
+	}
+	if (rows_per_group != other_bind.rows_per_group) {
+		return false;
+	}
+	if (global_db != other_bind.global_db) {
+		return false;
+	}
+	// We don't compare names, types, row_id_info, table, or column_ids
+	// as these are derived from the other fields
+	return true;
 }
 
 } // namespace duckdb
