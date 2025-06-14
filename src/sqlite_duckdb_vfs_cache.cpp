@@ -277,7 +277,7 @@ void SQLiteDuckDBCacheVFS::Register(ClientContext &context) {
 	if (!wrapper->vfs_name) {
 		throw InternalException("Failed to allocate memory for VFS name");
 	}
-	strcpy(wrapper->vfs_name, temp_name.c_str());
+	memcpy(wrapper->vfs_name, temp_name.c_str(), temp_name.length() + 1);
 	
 	// Initialize the IO methods for this VFS instance
 	InitializeIOMethods(wrapper->io_methods);
@@ -385,9 +385,9 @@ int SQLiteDuckDBCacheVFS::Open(sqlite3_vfs *vfs, const char *filename, sqlite3_f
 		}
 
 
-		// Zero-initialize the entire structure for safety
-		memset(duckdb_file, 0, sizeof(SQLiteDuckDBCachedFile));
+		// Initialize the structure members properly
 		duckdb_file->base.pMethods = &wrapper->io_methods;
+		duckdb_file->duckdb_file = nullptr;
 		duckdb_file->context = context;
 		
 		
@@ -396,7 +396,9 @@ int SQLiteDuckDBCacheVFS::Open(sqlite3_vfs *vfs, const char *filename, sqlite3_f
 			duckdb_file->duckdb_file = make_uniq<DuckDBCachedFile>(*context, filename);
 		} catch (...) {
 			// Clean up on failure
-			memset(duckdb_file, 0, sizeof(SQLiteDuckDBCachedFile));
+			duckdb_file->base.pMethods = nullptr;
+			duckdb_file->duckdb_file = nullptr;
+			duckdb_file->context = nullptr;
 			return SQLITE_CANTOPEN;
 		}
 		
