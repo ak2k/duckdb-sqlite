@@ -65,12 +65,10 @@ static unique_ptr<FunctionData> SQLiteQueryBind(ClientContext &context, TableFun
 
 SQLiteQueryFunction::SQLiteQueryFunction()
     : TableFunction("sqlite_query", {LogicalType::VARCHAR, LogicalType::VARCHAR}, nullptr, SQLiteQueryBind) {
-
 	SqliteScanFunction scan_function;
 	init_global = scan_function.init_global;
 	init_local = scan_function.init_local;
 	function = scan_function.function;
 	global_initialization = TableFunctionInitialization::INITIALIZE_ON_SCHEDULE;
-
 }
 } // namespace duckdb

@@ -6,8 +6,8 @@
 #include "sqlite_db.hpp"
 #include "sqlite_duckdb_vfs_cache.hpp"
 #include "sqlite_scanner.hpp"
-#include "sqlite_scanner_extension.hpp"
 #include "sqlite_storage.hpp"
+#include "sqlite_scanner_extension.hpp"
 
 #include "duckdb/catalog/catalog.hpp"
 #include "duckdb/main/extension_util.hpp"

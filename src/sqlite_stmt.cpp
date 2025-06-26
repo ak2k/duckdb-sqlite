@@ -6,34 +6,27 @@
 namespace duckdb {
 
 SQLiteStatement::SQLiteStatement() : db(nullptr), stmt(nullptr) {
-
 }
 
 SQLiteStatement::SQLiteStatement(sqlite3 *db, sqlite3_stmt *stmt) : db(db), stmt(stmt) {
 	D_ASSERT(db);
-
 }
 
 SQLiteStatement::~SQLiteStatement() {
-
 	Close();
 }
 
 SQLiteStatement::SQLiteStatement(SQLiteStatement &&other) noexcept : db(nullptr), stmt(nullptr) {
-
 	swap(db, other.db);
 	swap(stmt, other.stmt);
-
 }
 
 SQLiteStatement &SQLiteStatement::operator=(SQLiteStatement &&other) noexcept {
-
 	if (this != &other) {
 		Close();
 		swap(db, other.db);
 		swap(stmt, other.stmt);
 	}
-
 	return *this;
 }
 
@@ -69,16 +62,12 @@ bool SQLiteStatement::IsOpen() {
 }
 
 void SQLiteStatement::Close() {
-
 	if (!IsOpen()) {
-
 		return;
 	}
 	sqlite3_finalize(stmt);
-
 	db = nullptr;
 	stmt = nullptr;
-
 }
 
 void SQLiteStatement::CheckTypeMatches(const SqliteBindData &bind_data, sqlite3_value *val, int sqlite_column_type,

@@ -1,14 +1,15 @@
 #include "duckdb.hpp"
-#include "sqlite_storage.hpp"
+
+#include "sqlite3.h"
 #include "sqlite_utils.hpp"
+#include "sqlite_storage.hpp"
 #include "storage/sqlite_catalog.hpp"
 #include "storage/sqlite_transaction_manager.hpp"
+#include "duckdb/parser/parsed_data/attach_info.hpp"
+#include "duckdb/transaction/transaction_manager.hpp"
 #include "duckdb/catalog/catalog_entry/schema_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
 #include "duckdb/common/limits.hpp"
-#include "duckdb/parser/parsed_data/attach_info.hpp"
-#include "duckdb/transaction/transaction_manager.hpp"
-#include "sqlite3.h"
 
 namespace duckdb {
 

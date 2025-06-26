@@ -12,18 +12,14 @@ namespace duckdb {
 
 SQLiteCatalog::SQLiteCatalog(AttachedDatabase &db_p, const string &path, SQLiteOpenOptions options_p)
     : Catalog(db_p), path(path), options(std::move(options_p)), in_memory(path == ":memory:"), active_in_memory(false), in_memory_db_initialized(false) {
-
 }
 
 SQLiteCatalog::~SQLiteCatalog() {
-
 }
 
 void SQLiteCatalog::Initialize(bool load_builtin) {
-
 	CreateSchemaInfo info;
 	main_schema = make_uniq<SQLiteSchemaEntry>(*this, info);
-
 }
 
 optional_ptr<CatalogEntry> SQLiteCatalog::CreateSchema(CatalogTransaction transaction, CreateSchemaInfo &info) {
