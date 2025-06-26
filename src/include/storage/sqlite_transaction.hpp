@@ -8,10 +8,10 @@
 
 #pragma once
 
-#include "sqlite_db.hpp"
-#include "duckdb/common/case_insensitive_map.hpp"
-#include "duckdb/common/mutex.hpp"
 #include "duckdb/transaction/transaction.hpp"
+#include "duckdb/common/case_insensitive_map.hpp"
+#include "sqlite_db.hpp"
+#include "duckdb/common/mutex.hpp"
 #include "duckdb/common/atomic.hpp"
 
 namespace duckdb {

@@ -8,9 +8,9 @@
 
 #pragma once
 
-#include "sqlite_db.hpp"
-#include "sqlite_options.hpp"
 #include "duckdb/catalog/catalog.hpp"
+#include "sqlite_options.hpp"
+#include "sqlite_db.hpp"
 
 namespace duckdb {
 class SQLiteSchemaEntry;
