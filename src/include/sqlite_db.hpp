@@ -31,6 +31,8 @@ public:
 	sqlite3 *db;
 
 public:
+	//! Open a SQLite database (local files only)
+	static SQLiteDB Open(const string &path, const SQLiteOpenOptions &options, bool is_shared = false);
 	//! Open a SQLite database with support for both local and remote files (HTTP/HTTPS)
 	//! @param context Required for remote file access via DuckDB's VFS
 	static SQLiteDB Open(const string &path, const SQLiteOpenOptions &options, ClientContext &context, bool is_shared = false);

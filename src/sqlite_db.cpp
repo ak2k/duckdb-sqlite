@@ -164,6 +164,11 @@ SQLiteDB SQLiteDB::OpenWithVFS(const string &path, const SQLiteOpenOptions &opti
 	return result;
 }
 
+// Original entry point - local files only (preserved for backward compatibility)
+SQLiteDB SQLiteDB::Open(const string &path, const SQLiteOpenOptions &options, bool is_shared) {
+	return OpenLocal(path, options, is_shared);
+}
+
 // Main entry point for opening SQLite databases - handles both local and remote files
 // Remote files (HTTP/HTTPS) use DuckDB's VFS with caching, local files use standard SQLite
 SQLiteDB SQLiteDB::Open(const string &path, const SQLiteOpenOptions &options, ClientContext &context, bool is_shared) {
