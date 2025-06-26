@@ -102,8 +102,8 @@ struct DuckDBVFSWrapper;
 // HTTP Error Mapping
 //===--------------------------------------------------------------------===//
 
-// HTTP error patterns for detection
-static const string HTTP_ERROR_PATTERNS[] = {
+// HTTP error patterns for detection - compile-time constants
+static constexpr const char* HTTP_ERROR_PATTERNS[] = {
 	"\"exception_type\":\"HTTP\"",
 	"\"exception_type\":\"IO\"",
 	"404 (Not Found)",
@@ -150,7 +150,7 @@ static int ExtractHTTPStatus(const string &error_msg) {
 static bool IsHTTPError(const string &error_msg) {
 	// Use std::any_of with StringUtil::Contains for cleaner, more efficient checking
 	return std::any_of(std::begin(HTTP_ERROR_PATTERNS), std::end(HTTP_ERROR_PATTERNS),
-		[&error_msg](const string &pattern) {
+		[&error_msg](const char* pattern) {
 			return StringUtil::Contains(error_msg, pattern);
 		});
 }
@@ -175,8 +175,8 @@ static int HTTPStatusToSQLiteError(int http_status) {
 	}
 }
 
-template<typename T>
-static T SafeVFSCall(T error_value, const std::function<T()> &func, DuckDBVFSWrapper *wrapper = nullptr, const char *path = nullptr, const char *method = nullptr) {
+template<typename T, typename Func>
+static T SafeVFSCall(T error_value, Func&& func, DuckDBVFSWrapper *wrapper = nullptr, const char *path = nullptr, const char *method = nullptr) {
 	try {
 		return func();
 	} catch (const std::exception &e) {
