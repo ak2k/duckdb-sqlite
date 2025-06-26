@@ -4,47 +4,40 @@
 #include "duckdb/storage/table_storage_info.hpp"
 #include "duckdb/parser/column_list.hpp"
 #include "duckdb/parser/parser.hpp"
-#include "sqlite_db.hpp"
-#include "sqlite_stmt.hpp"
-#include "sqlite_duckdb_vfs_cache.hpp"
 #include "duckdb/common/exception.hpp"
 #include "duckdb/common/exception/http_exception.hpp"
 #include "duckdb/common/file_open_flags.hpp"
 #include "duckdb/common/swap.hpp"
 #include "duckdb/common/mutex.hpp"
 #include "duckdb/main/client_context.hpp"
+#include "sqlite_db.hpp"
+#include "sqlite_stmt.hpp"
+#include "sqlite_duckdb_vfs_cache.hpp"
 
 namespace duckdb {
 
 static bool debug_sqlite_print_queries = false;
 
 SQLiteDB::SQLiteDB() : db(nullptr) {
-
 }
 
 SQLiteDB::SQLiteDB(sqlite3 *db) : db(db) {
 }
 
 SQLiteDB::~SQLiteDB() {
-
 	Close();
-
 }
 
 SQLiteDB::SQLiteDB(SQLiteDB &&other) noexcept : db(nullptr) {
-
 	swap(db, other.db);
-
 }
 
 SQLiteDB &SQLiteDB::operator=(SQLiteDB &&other) noexcept {
-
 	if (this != &other) {
 		// Close any existing database first
 		Close();
 		swap(db, other.db);
 	}
-
 	return *this;
 }
 
@@ -59,8 +52,6 @@ int SQLiteDB::GetOpenFlags(const SQLiteOpenOptions &options, bool is_shared, boo
 	}
 	
 	if (!is_shared) {
-		// Disable SQLite's internal mutex for single-threaded access.
-		// Each connection should only be used by one thread at a time.
 		// FIXME: we should just make sure we are not re-using the same `sqlite3`
 		// object across threads
 		flags |= SQLITE_OPEN_NOMUTEX;
