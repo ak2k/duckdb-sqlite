@@ -107,7 +107,7 @@ private:
 
 // SQLite file handle structure that wraps our DuckDBCachedFile.
 // Memory layout must be compatible with SQLite's expectations.
-// IMPORTANT: This structure is allocated by SQLite and may cross module boundaries.
+// This structure is allocated by SQLite and may cross module boundaries.
 // We use raw pointers with explicit ownership rules to avoid DLL issues.
 struct SQLiteDuckDBCachedFile {
 	sqlite3_file base;  // Must be first member for C compatibility
