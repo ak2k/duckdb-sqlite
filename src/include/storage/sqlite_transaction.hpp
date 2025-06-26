@@ -13,6 +13,8 @@
 #include "duckdb/common/mutex.hpp"
 #include "duckdb/transaction/transaction.hpp"
 
+#include <atomic>
+
 namespace duckdb {
 class SQLiteCatalog;
 class SQLiteTableEntry;
@@ -40,8 +42,8 @@ private:
 	case_insensitive_map_t<unique_ptr<CatalogEntry>> catalog_entries;
 	bool started;
 	
-	// Function-local static mutex to avoid Windows DLL initialization issues
-	static mutex& GetInitializationMutex();
+	// Atomic flag for thread-safe initialization check
+	std::atomic<bool> db_initialized{false};
 };
 
 } // namespace duckdb

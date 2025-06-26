@@ -12,16 +12,41 @@
 #include "duckdb/parser/parser.hpp"
 #include "duckdb/parser/statement/create_statement.hpp"
 
+#include <atomic>
+
 namespace duckdb {
 
-// Function-local static mutex to avoid Windows DLL initialization issues
-mutex& SQLiteTransaction::GetInitializationMutex() {
-	static mutex initialization_mutex;
-	return initialization_mutex;
+//===--------------------------------------------------------------------===//
+// Per-Database Mutex Registry
+//===--------------------------------------------------------------------===//
+// Instead of a global mutex, we use per-database mutexes to reduce contention.
+// This allows concurrent access to different databases while maintaining
+// thread safety for each individual database.
+//===--------------------------------------------------------------------===//
+
+struct DatabaseMutexRegistry {
+	mutex registry_mutex;  // Protects the registry itself
+	unordered_map<string, unique_ptr<mutex>> database_mutexes;
+	
+	mutex& GetDatabaseMutex(const string &path) {
+		lock_guard<mutex> lock(registry_mutex);
+		auto it = database_mutexes.find(path);
+		if (it == database_mutexes.end()) {
+			database_mutexes[path] = make_uniq<mutex>();
+			return *database_mutexes[path];
+		}
+		return *it->second;
+	}
+};
+
+static DatabaseMutexRegistry& GetMutexRegistry() {
+	// Function-local static ensures thread-safe initialization
+	static DatabaseMutexRegistry registry;
+	return registry;
 }
 
 SQLiteTransaction::SQLiteTransaction(SQLiteCatalog &sqlite_catalog, TransactionManager &manager, ClientContext &context)
-    : Transaction(manager, context), sqlite_catalog(sqlite_catalog), db(nullptr), started(false) {
+    : Transaction(manager, context), sqlite_catalog(sqlite_catalog), db(nullptr), started(false), db_initialized(false) {
 
 	// Database connection and transaction start are deferred to prevent potential deadlocks.
 	// Opening SQLite connections for remote files can trigger HTTP requests and caching
@@ -48,15 +73,20 @@ void SQLiteTransaction::Rollback() {
 }
 
 SQLiteDB &SQLiteTransaction::GetDB() {
+	// Fast path: check if already initialized (with memory ordering)
+	if (db_initialized.load(std::memory_order_acquire)) {
+		return *db;
+	}
 
-	// Use double-checked locking to avoid mutex acquisition on every call
-	// (The mutex itself is safely initialized via function-local static)
-	if (!db || !started) {
-		lock_guard<mutex> lock(GetInitializationMutex());
-		
-		// Check again after acquiring lock (double-checked locking)
+	// Slow path: need to initialize
+	// Get per-database mutex to reduce contention
+	auto &database_mutex = GetMutexRegistry().GetDatabaseMutex(sqlite_catalog.path);
+	lock_guard<mutex> lock(database_mutex);
+	
+	// Check again after acquiring lock (double-checked locking with proper atomics)
+	if (!db_initialized.load(std::memory_order_relaxed)) {
+		// Initialize database connection
 		if (!db) {
-
 			if (sqlite_catalog.InMemory()) {
 				// in-memory database - get a reference to the in-memory connection
 				db = sqlite_catalog.GetInMemoryDatabase(*context.lock());
@@ -67,11 +97,14 @@ SQLiteDB &SQLiteTransaction::GetDB() {
 			}
 		}
 		
-		// Also handle deferred transaction start
+		// Start transaction if not already started
 		if (!started) {
 			db->Execute("BEGIN TRANSACTION");
 			started = true;
 		}
+		
+		// Mark as initialized with release semantics to ensure all writes are visible
+		db_initialized.store(true, std::memory_order_release);
 	}
 	
 	return *db;
