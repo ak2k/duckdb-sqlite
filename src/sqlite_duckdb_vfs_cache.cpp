@@ -248,7 +248,7 @@ void DuckDBCachedFile::EnsureInitialized() {
 	caching_handle = caching_fs.OpenFile(file_info, flags);
 	
 	// Cache the file size to avoid repeated remote calls
-	cached_file_size = caching_handle->GetFileSize();
+	cached_file_size = static_cast<sqlite3_int64>(caching_handle->GetFileSize());
 		
 	initialized = true;
 }
@@ -402,7 +402,7 @@ void SQLiteDuckDBCacheVFS::Register(ClientContext &context) {
 	
 	// Allocate VFS name using SQLite's allocator for DLL safety
 	const string temp_name = GetUniqueVFSName(&context);
-	wrapper->vfs_name = (char*)sqlite3_malloc64(temp_name.length() + 1);
+	wrapper->vfs_name = static_cast<char*>(sqlite3_malloc64(temp_name.length() + 1));
 	if (!wrapper->vfs_name) {
 		throw InternalException("Failed to allocate memory for VFS name");
 	}
@@ -690,7 +690,7 @@ int SQLiteDuckDBCacheVFS::GetLastError(sqlite3_vfs *vfs, int bytes, char *err_ms
 	strncpy(err_msg, error.c_str(), bytes - 1);
 	err_msg[bytes - 1] = '\0';
 	
-	return error.length();
+	return static_cast<int>(error.length());
 }
 
 //===--------------------------------------------------------------------===//
