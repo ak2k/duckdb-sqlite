@@ -85,12 +85,7 @@ void SQLiteDB::ApplyBusyTimeout(sqlite3 *db, const SQLiteOpenOptions &options) {
 }
 
 void SQLiteDB::HandleOpenError(const string &path, int rc, ClientContext *context) {
-	// Debug: print the actual error code
-	// fprintf(stderr, "DEBUG HandleOpenError: received SQLite error code: %d\n", rc);
-	
-	// Provide user-friendly error messages based on SQLite error codes
-	// Handle both primary and extended error codes
-	// Note: These error messages match SQLite's standard messages from sqlite3_errstr()
+	// Map SQLite error codes to user-friendly messages
 	string error_msg;
 	int primary_error = rc & 0xFF; // Extract primary error code from extended error code
 	
@@ -161,8 +156,6 @@ SQLiteDB SQLiteDB::OpenWithVFS(const string &path, const SQLiteOpenOptions &opti
 	
 	auto rc = sqlite3_open_v2(path.c_str(), &result.db, flags, SQLiteDuckDBCacheVFS::GetVFSNameForContext(context));
 	if (rc != SQLITE_OK) {
-		// Debug: print the actual error code
-		// fprintf(stderr, "DEBUG: sqlite3_open_v2 returned error code: %d\n", rc);
 		HandleOpenError(path, rc, &context);
 	}
 	

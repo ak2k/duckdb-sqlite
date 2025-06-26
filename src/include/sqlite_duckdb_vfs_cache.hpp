@@ -31,11 +31,11 @@ public:
 	// Read data from the file at the specified offset
 	int Read(void *buffer, int amount, sqlite3_int64 offset);
 	// Get the cached file size
-	sqlite3_int64 GetFileSize();
+	sqlite3_int64 get_file_size();
 
 private:
 	// Lazy initialization - defer DuckDB operations until first use
-	void EnsureInitialized();
+	void ensure_initialized();
 
 	// Adaptive read-ahead constants
 	static constexpr idx_t MIN_READAHEAD_SIZE = static_cast<idx_t>(1024) * 1024;       // 1MB
@@ -53,9 +53,9 @@ private:
 	idx_t current_readahead_size = MIN_READAHEAD_SIZE;    // Current read-ahead block size
 	
 	// Helper methods for adaptive read-ahead
-	idx_t CalculateReadAheadSize(sqlite3_int64 offset, int amount) const;
-	bool IsSequentialRead(sqlite3_int64 offset) const;
-	void UpdateReadAheadState(sqlite3_int64 offset, int amount);
+	idx_t calculate_read_ahead_size(sqlite3_int64 offset, int amount) const;
+	bool is_sequential_read(sqlite3_int64 offset) const;
+	void update_read_ahead_state(sqlite3_int64 offset, int amount);
 };
 
 // SQLite Virtual File System (VFS) implementation that uses DuckDB's

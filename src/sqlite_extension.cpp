@@ -55,7 +55,6 @@ static void LoadInternal(DatabaseInstance &db) {
 	config.AddExtensionOption("sqlite_debug_show_queries", "DEBUG SETTING: print all queries sent to SQLite to stdout",
 	                          LogicalType::BOOLEAN, Value::BOOLEAN(false), SetSqliteDebugQueryPrint);
 
-	// Only register storage extension if not already present
 	if (config.storage_extensions.find("sqlite_scanner") == config.storage_extensions.end()) {
 		config.storage_extensions["sqlite_scanner"] = make_uniq<SQLiteStorageExtension>();
 	}
@@ -85,7 +84,6 @@ DUCKDB_EXTENSION_API const char *sqlite_scanner_version() {
 }
 
 DUCKDB_EXTENSION_API void sqlite_scanner_storage_init(DBConfig &config) {
-	// Only register if not already present
 	if (config.storage_extensions.find("sqlite_scanner") == config.storage_extensions.end()) {
 		config.storage_extensions["sqlite_scanner"] = make_uniq<SQLiteStorageExtension>();
 	}

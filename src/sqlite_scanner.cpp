@@ -83,7 +83,7 @@ static unique_ptr<FunctionData> SqliteBind(ClientContext &context, TableFunction
 
 	result->names = names;
 	result->types = return_types;
-	result->global_db = nullptr;  // Initialize to prevent undefined behavior
+	result->global_db = nullptr;
 
 	return std::move(result);
 }
@@ -455,7 +455,6 @@ unique_ptr<FunctionData> SqliteBindData::Copy() const {
 	result->rows_per_group = rows_per_group;
 	result->global_db = global_db;
 	result->table = table;
-	// Copy the column_ids from the base class
 	result->column_ids = column_ids;
 	return std::move(result);
 }
