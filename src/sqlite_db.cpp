@@ -90,6 +90,7 @@ void SQLiteDB::HandleOpenError(const string &path, int rc, ClientContext *contex
 	
 	// Provide user-friendly error messages based on SQLite error codes
 	// Handle both primary and extended error codes
+	// Note: These error messages match SQLite's standard messages from sqlite3_errstr()
 	string error_msg;
 	int primary_error = rc & 0xFF; // Extract primary error code from extended error code
 	
