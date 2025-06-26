@@ -205,22 +205,22 @@ Also remove:
 
 ## Error Handling Issues
 
-### 6. ✅ Exception Handling at C Boundary - SYSTEMATIC FIX AVAILABLE
-**Validation:** CONFIRMED - Read() method missing exception handling
-**Location:** Various VFS callback methods, especially line 526
-**Issue:** C++ exceptions can escape through SQLite's C interface causing undefined behavior
+### 6. ✅ Exception Handling at C Boundary - FULLY FIXED
+**Validation:** CONFIRMED - Was missing exception handling
+**Location:** Various VFS callback methods
+**Issue:** C++ exceptions could escape through SQLite's C interface causing undefined behavior
 
-**Current State:**
-- `Open()` - Has try/catch ✓
-- `FileSize()` - Has try/catch ✓
-- **`Read()` - NO try/catch ❌** (line 526 calls `duckdb_file->Read()` which can throw!)
-- Other methods mostly safe (just return constants)
+**Fix Applied:** Comprehensive exception handling at all levels:
+1. **SafeVFSCall template** wraps all VFS callback methods
+2. **DuckDBCachedFile::Read()** has its own try/catch blocks (lines 272-276, 283-340)
+3. **Double protection** ensures no exceptions can escape to SQLite
 
-**Critical Problem:** The Read() method directly calls DuckDB code without exception protection:
-```cpp
-int SQLiteDuckDBCacheVFS::Read(sqlite3_file *file, void *buffer, int amount, sqlite3_int64 offset) {
-    // ...
-    int result = duckdb_file->duckdb_file->Read(buffer, amount, offset);  // CAN THROW!
+**Current State:** ALL methods properly protected:
+- `Open()` - Protected by SafeVFSCall ✓
+- `Read()` - Protected by SafeVFSCall + internal try/catch ✓
+- `FileSize()` - Protected by SafeVFSCall + internal try/catch ✓
+- `Access()` - Protected by SafeVFSCall ✓
+- All other VFS methods - Protected by SafeVFSCall ✓
     return result;
 }
 ```
@@ -549,83 +549,57 @@ int SQLiteDuckDBCacheVFS::GetLastError(sqlite3_vfs *vfs, int bytes, char *err_ms
 
 ## Additional Critical Correctness Issues
 
-### 21. ✅ VFS Use-After-Free - Lifetime Management Bug ⚠️ **CRASH RISK**
-**Validation:** CONFIRMED - Critical design flaw
-**Location:** `src/sqlite_duckdb_vfs_cache.cpp:255-317`, `DuckDBVFSWrapper` stores raw ClientContext*
-**Issue:** VFS stores raw pointer to ClientContext, but attached databases outlive ClientContexts
+### 21. ❌ VFS Use-After-Free - Not An Issue (Initially Misunderstood)
+**Validation:** FALSE - The perceived issue doesn't actually exist
+**Location:** `src/sqlite_duckdb_vfs_cache.cpp`, `DuckDBVFSWrapper` stores raw ClientContext*
+**Initial Concern:** VFS stores raw pointer to ClientContext, but attached databases outlive ClientContexts
 
-**Real-World Scenario:**
+**Why This Is NOT Actually a Problem:**
+After thorough investigation, the "use-after-free" scenario doesn't occur because:
+
+1. **Each ClientContext creates its own VFS instance** with a unique name like `duckdb_cache_vfs_<context_ptr>`
+2. **When a new ClientContext accesses an attached database**, it doesn't reuse the original VFS - it creates its own
+3. **The VFS name is not stored with the attachment** - only the database path is stored
+
+**What Actually Happens:**
 ```cpp
-// Thread 1
-{
-    ClientContext ctx1(db);
-    ctx1.Query("ATTACH DATABASE 'https://example.com/data.db' AS remote_db (TYPE SQLITE)");
-    // VFS registered with ctx1, SQLiteDB created with pointer to ctx1
-} // ctx1 destroyed here - VFS still registered globally in SQLite!
+// Context1 attaches database with its VFS
+Context1: ATTACH 'https://example.com/db.sqlite' 
+         -> Registers VFS "duckdb_cache_vfs_0x1234"
+         -> Opens SQLite connection using this VFS
 
-// Thread 2 (or later in Thread 1)
-{
-    ClientContext ctx2(db);
-    ctx2.Query("SELECT * FROM remote_db.table1"); 
-    // SQLiteDB still exists at DatabaseInstance level
-    // VFS callbacks use dangling pointer to ctx1 → CRASH!
+// Context1 destroyed
+-> VFS "duckdb_cache_vfs_0x1234" unregistered via ExtensionCallback
+-> SQLite connections using this VFS are closed
+
+// Context2 accesses the attached database  
+Context2: SELECT * FROM attached.table 
+         -> Creates NEW VFS "duckdb_cache_vfs_0x5678"
+         -> Opens NEW SQLite connection using the new VFS
+```
+
+**Key Insights:**
+- `SQLiteTransaction::GetDB()` calls `SQLiteDB::Open()` which chooses VFS based on current context
+- VFS registration is per-context to ensure proper cleanup and isolation
+- Multiple contexts accessing the same remote SQLite file each use their own VFS
+- All VFS instances share the same underlying `ExternalFileCache` for efficiency
+
+**Current Design Benefits:**
+- ✅ Follows DuckDB's per-connection isolation pattern
+- ✅ VFS lifetime naturally matches ClientContext lifetime
+- ✅ Thread-safe with no shared mutable state
+- ✅ Efficient through shared caching layer
+- ✅ Clean lifecycle management via ExtensionCallback
+
+**Defensive Programming Added:**
+We've added defensive checks to validate context before use:
+```cpp
+if (!context || !context->db) {
+    return SQLITE_CANTOPEN;
 }
 ```
 
-**Root Cause Analysis:**
-- Attached databases persist at DatabaseInstance level (survive ClientContext destruction)
-- VFS is registered per ClientContext but stored globally in SQLite
-- SQLite connections opened with the VFS outlive the ClientContext
-- VFS stores raw `ClientContext*` pointer that becomes dangling
-
-**Elegant Solution - VFS with Proper Context Management:**
-```cpp
-struct DuckDBVFSWrapper {
-    sqlite3_vfs base;
-    weak_ptr<DatabaseInstance> db_instance;  // Store weak_ptr to DatabaseInstance
-    
-    // Create temporary context for VFS operations
-    unique_ptr<ClientContext> GetContext() {
-        if (auto db = db_instance.lock()) {
-            // Create a temporary context just for this VFS operation
-            return make_uniq<ClientContext>(db);
-        }
-        return nullptr;
-    }
-};
-
-// In VFS callbacks - no stored ClientContext pointer!
-int SQLiteDuckDBCacheVFS::Read(sqlite3_file *file, void *buffer, int amount, sqlite3_int64 offset) {
-    auto wrapper = GetWrapperFromFile(file);
-    auto context = wrapper->GetContext();
-    if (!context) {
-        return SQLITE_IOERR;  // DatabaseInstance is gone
-    }
-    
-    // Use temporary context for CachingFileSystem access
-    auto &caching_fs = CachingFileSystem::Get(*context);
-    // ... perform read operation ...
-}
-
-// Register VFS with DatabaseInstance reference
-void SQLiteDuckDBCacheVFS::Register(ClientContext &context) {
-    auto wrapper = make_uniq<DuckDBVFSWrapper>();
-    wrapper->db_instance = context.db->GetSharedPtr();  // Get weak_ptr to DatabaseInstance
-    // ... register VFS ...
-}
-```
-
-**Why This Solution Is Best:**
-- No raw ClientContext pointers stored → no use-after-free
-- Creates temporary contexts as needed → always valid
-- Works with existing architecture → minimal changes
-- Handles DatabaseInstance destruction gracefully → returns errors instead of crashing
-- Thread-safe → each VFS operation gets its own context
-
-**Alternative Solutions (Less Elegant):**
-1. ❌ Reference counting - Complex and doesn't solve the fundamental lifetime mismatch
-2. ❌ Global VFS - Can't access CachingFileSystem without ClientContext
-3. ❌ Force connection close - Breaks attached database functionality
+**Conclusion:** The current implementation is already correct and elegant. The perceived lifetime issue was based on a misunderstanding of how the VFS registration works.
 
 ### 22. ✅ Double-Checked Locking Bug - Thread Safety ⚠️ **UNDEFINED BEHAVIOR**
 **Validation:** CONFIRMED - Classic concurrency bug
