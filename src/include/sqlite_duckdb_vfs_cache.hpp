@@ -100,9 +100,6 @@ public:
 	static int FileControl(sqlite3_file *file, int op, void *arg);
 	static int SectorSize(sqlite3_file *file);
 	static int DeviceCharacteristics(sqlite3_file *file);
-
-private:
-	// No private members - all state is managed through static methods
 };
 
 // SQLite file handle structure that wraps our DuckDBCachedFile.

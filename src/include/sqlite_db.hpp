@@ -68,7 +68,6 @@ private:
 	//! Open a local SQLite database file (no remote support)
 	static SQLiteDB OpenLocal(const string &path, const SQLiteOpenOptions &options, bool is_shared = false);
 	
-	//! Verify database handle is valid
 	static void CheckDBValid(sqlite3 *db);
 };
 
