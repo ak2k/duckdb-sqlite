@@ -115,7 +115,7 @@ static constexpr const char* HTTP_ERROR_PATTERNS[] = {
 	"HTTP GET to"
 };
 
-// Modern regex-based HTTP status code extraction using DuckDB's regex wrapper
+// Regex-based HTTP status code extraction
 static int extract_http_status(const string &error_msg) {
 	// Comprehensive regex pattern for all HTTP status code formats:
 	// Group 1: "status_code":"XXX" (JSON)
@@ -143,7 +143,7 @@ static int extract_http_status(const string &error_msg) {
 	return 0; // No status code found
 }
 
-// Modern idiomatic HTTP error detection using StringUtil
+// HTTP error detection
 static bool is_http_error(const string &error_msg) {
 	// Use std::any_of with StringUtil::Contains for cleaner, more efficient checking
 	return std::any_of(std::begin(HTTP_ERROR_PATTERNS), std::end(HTTP_ERROR_PATTERNS),
@@ -425,7 +425,6 @@ int DuckDBCachedFile::Read(void *buffer, int amount, sqlite3_int64 offset) {
 sqlite3_int64 DuckDBCachedFile::get_file_size() {
 	try {
 		ensure_initialized();
-		// Let DuckDB handle all caching/validation logic
 		return static_cast<sqlite3_int64>(caching_handle->GetFileSize());
 	} catch (...) {
 		return -1;
@@ -478,9 +477,6 @@ bool SQLiteDuckDBCacheVFS::CanHandlePath(ClientContext &context, const string &p
 void SQLiteDuckDBCacheVFS::Register(ClientContext &context) {
 	auto& registry_data = GetVFSRegistryData();
 	lock_guard<mutex> lock(registry_data.registry_mutex);
-	
-	// Context is a reference, so it cannot be null
-	// Just proceed with registration
 	
 	// Check if this context already has a VFS registered
 	auto it = registry_data.registry.find(&context);

@@ -30,8 +30,8 @@ SQLiteStatement &SQLiteStatement::operator=(SQLiteStatement &&other) noexcept {
 
 	if (this != &other) {
 		Close();
-		std::swap(db, other.db);
-		std::swap(stmt, other.stmt);
+		swap(db, other.db);
+		swap(stmt, other.stmt);
 	}
 
 	return *this;
