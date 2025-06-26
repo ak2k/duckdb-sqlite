@@ -117,20 +117,12 @@ private:
 
 // SQLite file handle structure that wraps our DuckDBCachedFile.
 // Memory layout must be compatible with SQLite's expectations.
-#ifdef _WIN32
-#pragma pack(push, 8)
+// IMPORTANT: This structure is allocated by SQLite and may cross module boundaries.
+// We use raw pointers with explicit ownership rules to avoid DLL issues.
 struct SQLiteDuckDBCachedFile {
 	sqlite3_file base;  // Must be first member for C compatibility
-	unique_ptr<DuckDBCachedFile> duckdb_file;  // The actual file implementation
-	ClientContext *context;  // DuckDB context for this file
+	DuckDBCachedFile *duckdb_file;  // Raw pointer - explicitly deleted in Close()
+	ClientContext *context;  // Non-owning pointer to DuckDB context
 };
-#pragma pack(pop)
-#else
-struct SQLiteDuckDBCachedFile {
-	sqlite3_file base;  // Must be first member for C compatibility
-	unique_ptr<DuckDBCachedFile> duckdb_file;  // The actual file implementation
-	ClientContext *context;  // DuckDB context for this file
-};
-#endif
 
 } // namespace duckdb

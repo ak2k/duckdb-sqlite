@@ -83,25 +83,25 @@ void SQLiteDB::ApplyBusyTimeout(sqlite3 *db, const SQLiteOpenOptions &options) {
 }
 
 void SQLiteDB::HandleOpenError(const string &path, int rc, ClientContext *context) {
-	// If we have a context, try to get a more specific error message
+	// Try to get more specific error information
 	if (context) {
 		try {
 			// Attempt to open the file through DuckDB's filesystem to get better error messages.
 			auto &fs = context->db->GetFileSystem();
 			auto file_handle = fs.OpenFile(path, FileFlags::FILE_FLAGS_READ);
 		} catch (const HTTPException &e) {
-			// Re-throw HTTP errors with their original context
-			throw;
+			// HTTP errors already have good error messages
+			throw ConnectionException("Unable to open database \"%s\": %s", path, e.what());
 		} catch (const Exception &e) {
-			// Re-throw other DuckDB exceptions as-is
-			throw;
+			// Other DuckDB exceptions - include the specific error
+			throw ConnectionException("Unable to open database \"%s\": %s", path, e.what());
 		} catch (...) {
-			// Fall back to SQLite's error message
+			// Unknown error - fall back to SQLite's error message
 			throw ConnectionException("Unable to open database \"%s\": %s", path, sqlite3_errstr(rc));
 		}
 		
-		// If OpenFile succeeded but SQLite failed, report SQLite's error
-		throw ConnectionException("Unable to open database \"%s\": %s", path, sqlite3_errstr(rc));
+		// If OpenFile succeeded but SQLite failed, report SQLite's error with context
+		throw ConnectionException("Unable to open database \"%s\": %s (SQLite error %d)", path, sqlite3_errstr(rc), rc);
 	} else {
 		// No context available, just throw SQLite's error
 		throw ConnectionException("Unable to open database \"%s\": %s", path, sqlite3_errstr(rc));
@@ -133,6 +133,21 @@ SQLiteDB SQLiteDB::OpenWithVFS(const string &path, const SQLiteOpenOptions &opti
 	
 	SQLiteDB result;
 	int flags = GetOpenFlags(options, is_shared, true);
+	
+	// For remote files, do a pre-check to get better error messages
+	if (FileSystem::IsRemoteFile(path)) {
+		try {
+			auto &fs = context.db->GetFileSystem();
+			auto file_handle = fs.OpenFile(path, FileFlags::FILE_FLAGS_READ);
+			// If we get here, the file exists - close it and let SQLite open it
+			file_handle.reset();
+		} catch (const HTTPException &e) {
+			// HTTP exceptions already contain formatted error messages
+			throw ConnectionException("Unable to open database \"%s\": %s", path, e.what());
+		} catch (const Exception &e) {
+			throw ConnectionException("Unable to open database \"%s\": %s", path, e.what());
+		}
+	}
 	
 	auto rc = sqlite3_open_v2(path.c_str(), &result.db, flags, SQLiteDuckDBCacheVFS::GetVFSNameForContext(context));
 	if (rc != SQLITE_OK) {

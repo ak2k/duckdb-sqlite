@@ -22,41 +22,6 @@
 namespace duckdb {
 
 //===--------------------------------------------------------------------===//
-// C/C++ Boundary Safety
-//===--------------------------------------------------------------------===//
-// Template to safely execute C++ code from SQLite's C callbacks.
-// Catches all exceptions and converts them to appropriate SQLite error codes.
-// This is critical because SQLite is written in C and cannot handle C++ exceptions.
-//
-// Usage:
-//   return SafeVFSCall<int>(SQLITE_IOERR, [&]() {
-//       // C++ code that might throw
-//       return SQLITE_OK;
-//   });
-//===--------------------------------------------------------------------===//
-
-template<typename T>
-static T SafeVFSCall(T error_value, const std::function<T()> &func) {
-	try {
-		return func();
-	} catch (const PermissionException &) {
-		return error_value == SQLITE_OK ? SQLITE_PERM : error_value;
-	} catch (const HTTPException &) {
-		return error_value == SQLITE_OK ? SQLITE_IOERR : error_value;
-	} catch (const IOException &) {
-		return error_value == SQLITE_OK ? SQLITE_IOERR : error_value;
-	} catch (const Exception &) {
-		// DuckDB exceptions - already logged
-		return error_value;
-	} catch (const std::bad_alloc &) {
-		return error_value == SQLITE_OK ? SQLITE_NOMEM : error_value;
-	} catch (...) {
-		// Unknown exception - return generic error
-		return error_value;
-	}
-}
-
-//===--------------------------------------------------------------------===//
 // Concurrency Design
 //===--------------------------------------------------------------------===//
 // This VFS implementation is designed for safe concurrent access:
@@ -89,6 +54,10 @@ struct DuckDBVFSWrapper {
 	char *vfs_name;            // Unique name for this VFS instance (allocated via sqlite3_malloc)
 	sqlite3_io_methods io_methods; // IO methods for this VFS instance
 	
+	// Error context storage for better diagnostics
+	mutable mutex error_mutex;
+	string last_error_message;
+	
 	~DuckDBVFSWrapper() {
 		// Clean up using SQLite's allocator to match sqlite3_malloc
 		if (vfs_name) {
@@ -96,7 +65,99 @@ struct DuckDBVFSWrapper {
 			vfs_name = nullptr;
 		}
 	}
+	
+	void SetLastError(const string &error) {
+		lock_guard<mutex> lock(error_mutex);
+		last_error_message = error;
+	}
+	
+	string GetLastError() const {
+		lock_guard<mutex> lock(error_mutex);
+		return last_error_message;
+	}
 };
+
+//===--------------------------------------------------------------------===//
+// C/C++ Boundary Safety
+//===--------------------------------------------------------------------===//
+// Template to safely execute C++ code from SQLite's C callbacks.
+// Catches all exceptions and converts them to appropriate SQLite error codes.
+// This is critical because SQLite is written in C and cannot handle C++ exceptions.
+//
+// Usage:
+//   return SafeVFSCall<int>(SQLITE_IOERR, [&]() {
+//       // C++ code that might throw
+//       return SQLITE_OK;
+//   });
+//===--------------------------------------------------------------------===//
+
+template<typename T>
+static T SafeVFSCall(T error_value, const std::function<T()> &func, DuckDBVFSWrapper *wrapper = nullptr, const char *path = nullptr) {
+	try {
+		return func();
+	} catch (const HTTPException &e) {
+		// Store HTTP error context
+		if (wrapper) {
+			string error_msg = "HTTP Error: ";
+			error_msg += e.what();
+			if (path) {
+				error_msg += " (URL: ";
+				error_msg += path;
+				error_msg += ")";
+			}
+			wrapper->SetLastError(error_msg);
+		}
+		return error_value == SQLITE_OK ? SQLITE_IOERR : error_value;
+	} catch (const PermissionException &e) {
+		if (wrapper) {
+			string error_msg = "Permission denied: ";
+			error_msg += e.what();
+			if (path) {
+				error_msg += " (Path: ";
+				error_msg += path;
+				error_msg += ")";
+			}
+			wrapper->SetLastError(error_msg);
+		}
+		return error_value == SQLITE_OK ? SQLITE_PERM : error_value;
+	} catch (const IOException &e) {
+		if (wrapper) {
+			string error_msg = "I/O Error: ";
+			error_msg += e.what();
+			if (path) {
+				error_msg += " (Path: ";
+				error_msg += path;
+				error_msg += ")";
+			}
+			wrapper->SetLastError(error_msg);
+		}
+		return error_value == SQLITE_OK ? SQLITE_IOERR : error_value;
+	} catch (const Exception &e) {
+		// DuckDB exceptions - store context
+		if (wrapper) {
+			string error_msg = "Database Error: ";
+			error_msg += e.what();
+			if (path) {
+				error_msg += " (Path: ";
+				error_msg += path;
+				error_msg += ")";
+			}
+			wrapper->SetLastError(error_msg);
+		}
+		return error_value;
+	} catch (const std::bad_alloc &) {
+		if (wrapper) {
+			wrapper->SetLastError("Out of memory");
+		}
+		return error_value == SQLITE_OK ? SQLITE_NOMEM : error_value;
+	} catch (...) {
+		// Unknown exception
+		if (wrapper) {
+			wrapper->SetLastError("Unknown error occurred");
+		}
+		return error_value;
+	}
+}
 
 // Global registry of VFS wrappers to manage their lifetime
 // Use function-local statics to ensure proper initialization order on Windows
@@ -416,6 +477,9 @@ const char *SQLiteDuckDBCacheVFS::GetVFSNameForContext(ClientContext &context) {
 	return SQLITE_OK;
 
 int SQLiteDuckDBCacheVFS::Open(sqlite3_vfs *vfs, const char *filename, sqlite3_file *file, int flags, int *out_flags) {
+	// Get wrapper for error context
+	auto *wrapper = vfs && vfs->pAppData ? static_cast<DuckDBVFSWrapper*>(vfs->pAppData) : nullptr;
+	
 	return SafeVFSCall<int>(SQLITE_CANTOPEN, [&]() {
 		// Validate parameters and ensure read-only access
 		if (!vfs || !filename || !file || (flags & SQLITE_OPEN_READONLY) == 0) {
@@ -453,7 +517,7 @@ int SQLiteDuckDBCacheVFS::Open(sqlite3_vfs *vfs, const char *filename, sqlite3_f
 		
 		// Create the DuckDB file handle with proper exception handling
 		try {
-			duckdb_file->duckdb_file = make_uniq<DuckDBCachedFile>(*context, filename);
+			duckdb_file->duckdb_file = new DuckDBCachedFile(*context, filename);
 		} catch (...) {
 			// Clean up on failure
 			duckdb_file->base.pMethods = nullptr;
@@ -470,7 +534,7 @@ int SQLiteDuckDBCacheVFS::Open(sqlite3_vfs *vfs, const char *filename, sqlite3_f
 		}
 
 		return SQLITE_OK;
-	});
+	}, wrapper, filename);
 }
 
 int SQLiteDuckDBCacheVFS::Delete(sqlite3_vfs *vfs, const char *filename, int sync_dir) {
@@ -479,6 +543,8 @@ int SQLiteDuckDBCacheVFS::Delete(sqlite3_vfs *vfs, const char *filename, int syn
 }
 
 int SQLiteDuckDBCacheVFS::Access(sqlite3_vfs *vfs, const char *filename, int flags, int *result) {
+	auto *wrapper = vfs && vfs->pAppData ? static_cast<DuckDBVFSWrapper*>(vfs->pAppData) : nullptr;
+	
 	return SafeVFSCall<int>(SQLITE_IOERR, [&]() {
 		if (!filename || !result) {
 			return SQLITE_IOERR;
@@ -547,7 +613,7 @@ int SQLiteDuckDBCacheVFS::Access(sqlite3_vfs *vfs, const char *filename, int fla
 		}
 
 		return SQLITE_OK;
-	});
+	}, wrapper, filename);
 }
 
 int SQLiteDuckDBCacheVFS::FullPathname(sqlite3_vfs *vfs, const char *filename, int out_size, char *out_buf) {
@@ -597,10 +663,23 @@ void SQLiteDuckDBCacheVFS::DlClose(sqlite3_vfs *vfs, void *handle) {
 }
 
 int SQLiteDuckDBCacheVFS::GetLastError(sqlite3_vfs *vfs, int bytes, char *err_msg) {
-	if (err_msg && bytes > 0) {
-		err_msg[0] = '\0';
+	if (!vfs || !vfs->pAppData || !err_msg || bytes <= 0) {
+		return 0;
 	}
-	return 0;
+	
+	auto *wrapper = static_cast<DuckDBVFSWrapper*>(vfs->pAppData);
+	string error = wrapper->GetLastError();
+	
+	if (error.empty()) {
+		err_msg[0] = '\0';
+		return 0;
+	}
+	
+	// Copy error message to buffer
+	strncpy(err_msg, error.c_str(), bytes - 1);
+	err_msg[bytes - 1] = '\0';
+	
+	return error.length();
 }
 
 //===--------------------------------------------------------------------===//
@@ -611,7 +690,10 @@ int SQLiteDuckDBCacheVFS::Close(sqlite3_file *file) {
 	return SafeVFSCall<int>(SQLITE_OK, [&]() {
 		if (file) {
 			auto *duckdb_file = reinterpret_cast<SQLiteDuckDBCachedFile*>(file);
-			duckdb_file->duckdb_file.reset();
+			// Explicitly delete the raw pointer
+			delete duckdb_file->duckdb_file;
+			duckdb_file->duckdb_file = nullptr;
+			duckdb_file->context = nullptr;
 		}
 		return SQLITE_OK;
 	});
