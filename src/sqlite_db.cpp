@@ -218,18 +218,14 @@ bool SQLiteDB::IsOpen() {
 }
 
 void SQLiteDB::Close() {
-
 	if (!IsOpen()) {
-
 		return;
 	}
 	auto rc = sqlite3_close_v2(db);
-
 	if (rc == SQLITE_BUSY) {
 		throw InternalException("Failed to close database - SQLITE_BUSY");
 	}
 	db = nullptr;
-
 }
 
 vector<string> SQLiteDB::GetEntries(string entry_type) {
