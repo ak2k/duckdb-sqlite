@@ -22,6 +22,41 @@
 namespace duckdb {
 
 //===--------------------------------------------------------------------===//
+// C/C++ Boundary Safety
+//===--------------------------------------------------------------------===//
+// Template to safely execute C++ code from SQLite's C callbacks.
+// Catches all exceptions and converts them to appropriate SQLite error codes.
+// This is critical because SQLite is written in C and cannot handle C++ exceptions.
+//
+// Usage:
+//   return SafeVFSCall<int>(SQLITE_IOERR, [&]() {
+//       // C++ code that might throw
+//       return SQLITE_OK;
+//   });
+//===--------------------------------------------------------------------===//
+
+template<typename T>
+static T SafeVFSCall(T error_value, const std::function<T()> &func) {
+	try {
+		return func();
+	} catch (const PermissionException &) {
+		return error_value == SQLITE_OK ? SQLITE_PERM : error_value;
+	} catch (const HTTPException &) {
+		return error_value == SQLITE_OK ? SQLITE_IOERR : error_value;
+	} catch (const IOException &) {
+		return error_value == SQLITE_OK ? SQLITE_IOERR : error_value;
+	} catch (const Exception &) {
+		// DuckDB exceptions - already logged
+		return error_value;
+	} catch (const std::bad_alloc &) {
+		return error_value == SQLITE_OK ? SQLITE_NOMEM : error_value;
+	} catch (...) {
+		// Unknown exception - return generic error
+		return error_value;
+	}
+}
+
+//===--------------------------------------------------------------------===//
 // Concurrency Design
 //===--------------------------------------------------------------------===//
 // This VFS implementation is designed for safe concurrent access:
@@ -273,6 +308,9 @@ void SQLiteDuckDBCacheVFS::Register(ClientContext &context) {
 	auto& registry_data = GetVFSRegistryData();
 	lock_guard<mutex> lock(registry_data.registry_mutex);
 	
+	// Context is a reference, so it cannot be null
+	// Just proceed with registration
+	
 	// Check if this context already has a VFS registered
 	auto it = registry_data.registry.find(&context);
 	if (it != registry_data.registry.end()) {
@@ -329,7 +367,7 @@ void SQLiteDuckDBCacheVFS::Register(ClientContext &context) {
 		throw InternalException("Failed to register DuckDB Cache VFS: %s", sqlite3_errstr(rc));
 	}
 
-	// Store in registry
+	// Store in registry - wrapper ownership transfers to registry
 	registry_data.registry[&context] = std::move(wrapper);
 }
 
@@ -378,12 +416,12 @@ const char *SQLiteDuckDBCacheVFS::GetVFSNameForContext(ClientContext &context) {
 	return SQLITE_OK;
 
 int SQLiteDuckDBCacheVFS::Open(sqlite3_vfs *vfs, const char *filename, sqlite3_file *file, int flags, int *out_flags) {
-	// Validate parameters and ensure read-only access
-	if (!vfs || !filename || !file || (flags & SQLITE_OPEN_READONLY) == 0) {
-		return SQLITE_CANTOPEN;
-	}
+	return SafeVFSCall<int>(SQLITE_CANTOPEN, [&]() {
+		// Validate parameters and ensure read-only access
+		if (!vfs || !filename || !file || (flags & SQLITE_OPEN_READONLY) == 0) {
+			return SQLITE_CANTOPEN;
+		}
 
-	try {
 		// Ensure SQLite allocated enough space for our file structure
 		if (vfs->szOsFile < static_cast<int>(sizeof(SQLiteDuckDBCachedFile))) {
 			return SQLITE_CANTOPEN;
@@ -402,13 +440,16 @@ int SQLiteDuckDBCacheVFS::Open(sqlite3_vfs *vfs, const char *filename, sqlite3_f
 		if (!context) {
 			return SQLITE_CANTOPEN;
 		}
-
+		
+		// Validate that the ClientContext is still valid by checking if it has a database
+		if (!context->db) {
+			return SQLITE_CANTOPEN;
+		}
 
 		// Initialize the structure members properly
 		duckdb_file->base.pMethods = &wrapper->io_methods;
 		duckdb_file->duckdb_file = nullptr;
 		duckdb_file->context = context;
-		
 		
 		// Create the DuckDB file handle with proper exception handling
 		try {
@@ -429,12 +470,7 @@ int SQLiteDuckDBCacheVFS::Open(sqlite3_vfs *vfs, const char *filename, sqlite3_f
 		}
 
 		return SQLITE_OK;
-	} catch (const PermissionException &e) {
-		return SQLITE_PERM;
-	} catch (...) {
-		// All other exceptions map to CANTOPEN
-		return SQLITE_CANTOPEN;
-	}
+	});
 }
 
 int SQLiteDuckDBCacheVFS::Delete(sqlite3_vfs *vfs, const char *filename, int sync_dir) {
@@ -443,14 +479,14 @@ int SQLiteDuckDBCacheVFS::Delete(sqlite3_vfs *vfs, const char *filename, int syn
 }
 
 int SQLiteDuckDBCacheVFS::Access(sqlite3_vfs *vfs, const char *filename, int flags, int *result) {
-	if (!filename || !result) {
-		return SQLITE_IOERR;
-	}
+	return SafeVFSCall<int>(SQLITE_IOERR, [&]() {
+		if (!filename || !result) {
+			return SQLITE_IOERR;
+		}
 
-	// Initialize result to safe default
-	*result = 0;
+		// Initialize result to safe default
+		*result = 0;
 
-	try {
 		// For remote files, we need to handle journal/WAL file checks properly.
 		// SQLite uses Access() to check for the existence of journal and WAL files
 		// to determine if a database might have uncommitted transactions.
@@ -481,7 +517,7 @@ int SQLiteDuckDBCacheVFS::Access(sqlite3_vfs *vfs, const char *filename, int fla
 				auto *wrapper = static_cast<DuckDBVFSWrapper*>(vfs->pAppData);
 				ClientContext *context = wrapper->context;
 				
-				if (!context) {
+				if (!context || !context->db) {
 					*result = 0;
 					return SQLITE_OK;
 				}
@@ -511,22 +547,20 @@ int SQLiteDuckDBCacheVFS::Access(sqlite3_vfs *vfs, const char *filename, int fla
 		}
 
 		return SQLITE_OK;
-	} catch (...) {
-		// On any error, return that file doesn't exist
-		*result = 0;
-		return SQLITE_OK;
-	}
+	});
 }
 
 int SQLiteDuckDBCacheVFS::FullPathname(sqlite3_vfs *vfs, const char *filename, int out_size, char *out_buf) {
-	if (!filename || !out_buf || out_size <= 0) {
-		return SQLITE_IOERR;
-	}
+	return SafeVFSCall<int>(SQLITE_IOERR, [&]() {
+		if (!filename || !out_buf || out_size <= 0) {
+			return SQLITE_IOERR;
+		}
 
-	// Remote paths are already absolute URLs - return as-is
-	strncpy(out_buf, filename, out_size - 1);
-	out_buf[out_size - 1] = '\0';
-	return SQLITE_OK;
+		// Remote paths are already absolute URLs - return as-is
+		strncpy(out_buf, filename, out_size - 1);
+		out_buf[out_size - 1] = '\0';
+		return SQLITE_OK;
+	});
 }
 
 // These methods don't need special handling - delegate to default VFS
@@ -574,43 +608,44 @@ int SQLiteDuckDBCacheVFS::GetLastError(sqlite3_vfs *vfs, int bytes, char *err_ms
 //===--------------------------------------------------------------------===//
 
 int SQLiteDuckDBCacheVFS::Close(sqlite3_file *file) {
-	if (file) {
-		auto *duckdb_file = reinterpret_cast<SQLiteDuckDBCachedFile*>(file);
-		duckdb_file->duckdb_file.reset();
-	}
-	return SQLITE_OK;
+	return SafeVFSCall<int>(SQLITE_OK, [&]() {
+		if (file) {
+			auto *duckdb_file = reinterpret_cast<SQLiteDuckDBCachedFile*>(file);
+			duckdb_file->duckdb_file.reset();
+		}
+		return SQLITE_OK;
+	});
 }
 
 int SQLiteDuckDBCacheVFS::Read(sqlite3_file *file, void *buffer, int amount, sqlite3_int64 offset) {
-	if (!file || !buffer) {
-		return SQLITE_IOERR_READ;
-	}
+	return SafeVFSCall<int>(SQLITE_IOERR_READ, [&]() {
+		if (!file || !buffer) {
+			return SQLITE_IOERR_READ;
+		}
 
-	auto *duckdb_file = reinterpret_cast<SQLiteDuckDBCachedFile*>(file);
-	if (!duckdb_file->duckdb_file) {
-		return SQLITE_IOERR_READ;
-	}
+		auto *duckdb_file = reinterpret_cast<SQLiteDuckDBCachedFile*>(file);
+		if (!duckdb_file->duckdb_file) {
+			return SQLITE_IOERR_READ;
+		}
 
-	int result = duckdb_file->duckdb_file->Read(buffer, amount, offset);
-	return result;
+		return duckdb_file->duckdb_file->Read(buffer, amount, offset);
+	});
 }
 
 int SQLiteDuckDBCacheVFS::FileSize(sqlite3_file *file, sqlite3_int64 *size) {
-	if (!file || !size) {
-		return SQLITE_IOERR;
-	}
+	return SafeVFSCall<int>(SQLITE_IOERR, [&]() {
+		if (!file || !size) {
+			return SQLITE_IOERR;
+		}
 
-	auto *duckdb_file = reinterpret_cast<SQLiteDuckDBCachedFile*>(file);
-	if (!duckdb_file->duckdb_file) {
-		return SQLITE_IOERR;
-	}
+		auto *duckdb_file = reinterpret_cast<SQLiteDuckDBCachedFile*>(file);
+		if (!duckdb_file->duckdb_file) {
+			return SQLITE_IOERR;
+		}
 
-	try {
 		*size = duckdb_file->duckdb_file->GetFileSize();
 		return SQLITE_OK;
-	} catch (...) {
-		return SQLITE_IOERR;
-	}
+	});
 }
 
 // Write operations return SQLITE_READONLY since remote files are read-only
