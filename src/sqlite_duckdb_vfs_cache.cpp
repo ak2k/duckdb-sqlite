@@ -202,8 +202,8 @@ static void InitializeIOMethods(sqlite3_io_methods &io_methods) {
 }
 
 // Get the unique VFS name for a ClientContext
-static string GetUniqueVFSName(ClientContext *context) {
-	return "duckdb_cache_vfs_" + std::to_string(reinterpret_cast<uintptr_t>(context));
+static string GetUniqueVFSName(const ClientContext *context) {
+	return "duckdb_cache_vfs_" + to_string(reinterpret_cast<uintptr_t>(context));
 }
 
 //===--------------------------------------------------------------------===//
@@ -270,14 +270,14 @@ int DuckDBCachedFile::Read(void *buffer, int amount, sqlite3_int64 offset) {
 		}
 		
 		// Calculate how many bytes we can actually read
-		sqlite3_int64 available_bytes = cached_file_size - offset;
-		int bytes_to_read = (available_bytes < amount) ? static_cast<int>(available_bytes) : amount;
+		const sqlite3_int64 available_bytes = cached_file_size - offset;
+		const int bytes_to_read = (available_bytes < amount) ? static_cast<int>(available_bytes) : amount;
 		
 		// Calculate optimal read-ahead size based on access pattern
-		uint64_t readahead_size = CalculateReadAheadSize(offset, bytes_to_read);
+		const uint64_t readahead_size = CalculateReadAheadSize(offset, bytes_to_read);
 		
 		// Ensure we read at least the requested amount (up to EOF)
-		uint64_t actual_read_size = std::max(static_cast<uint64_t>(bytes_to_read), readahead_size);
+		uint64_t actual_read_size = MaxValue(static_cast<uint64_t>(bytes_to_read), readahead_size);
 		
 		// Don't read beyond file end
 		if (offset + static_cast<sqlite3_int64>(actual_read_size) > cached_file_size) {
@@ -329,8 +329,8 @@ uint64_t DuckDBCachedFile::CalculateReadAheadSize(sqlite3_int64 offset, int amou
 	}
 	
 	// Sequential read - double the current size up to maximum
-	uint64_t next_size = current_readahead_size * 2;
-	return std::min(next_size, MAX_READAHEAD_SIZE);
+	const uint64_t next_size = current_readahead_size * 2;
+	return MinValue(next_size, MAX_READAHEAD_SIZE);
 }
 
 bool DuckDBCachedFile::IsSequentialRead(sqlite3_int64 offset) const {
@@ -345,7 +345,7 @@ void DuckDBCachedFile::UpdateReadAheadState(sqlite3_int64 offset, int amount) {
 	// Update read-ahead size based on access pattern
 	if (IsSequentialRead(offset)) {
 		// Sequential read - grow read-ahead size
-		current_readahead_size = std::min(current_readahead_size * 2, MAX_READAHEAD_SIZE);
+		current_readahead_size = MinValue(current_readahead_size * 2, MAX_READAHEAD_SIZE);
 	} else {
 		// Non-sequential read - reset to minimum
 		current_readahead_size = MIN_READAHEAD_SIZE;
@@ -390,7 +390,7 @@ void SQLiteDuckDBCacheVFS::Register(ClientContext &context) {
 	wrapper->context = &context;
 	
 	// Allocate VFS name using SQLite's allocator for DLL safety
-	string temp_name = GetUniqueVFSName(&context);
+	const string temp_name = GetUniqueVFSName(&context);
 	wrapper->vfs_name = (char*)sqlite3_malloc64(temp_name.length() + 1);
 	if (!wrapper->vfs_name) {
 		throw InternalException("Failed to allocate memory for VFS name");
@@ -559,7 +559,7 @@ int SQLiteDuckDBCacheVFS::Access(sqlite3_vfs *vfs, const char *filename, int fla
 		
 		if (flags == SQLITE_ACCESS_EXISTS) {
 			// Check if this is a journal or WAL file by examining the suffix
-			string file_path(filename);
+			const string file_path(filename);
 			bool is_journal = false;
 			bool is_wal = false;
 			
@@ -668,7 +668,7 @@ int SQLiteDuckDBCacheVFS::GetLastError(sqlite3_vfs *vfs, int bytes, char *err_ms
 	}
 	
 	auto *wrapper = static_cast<DuckDBVFSWrapper*>(vfs->pAppData);
-	string error = wrapper->GetLastError();
+	const string error = wrapper->GetLastError();
 	
 	if (error.empty()) {
 		err_msg[0] = '\0';
