@@ -10,11 +10,20 @@ INSTALL httpfs;
 statement ok
 LOAD httpfs;
 
-# Test 11: Error handling - non-existent URL
-# Note: Error message varies by platform due to different HTTP client implementations
-# macOS: "Connection Error: Unable to open database"
-# Linux: "HTTP Error" with detailed JSON
+# Test: Invalid domain (network error)
 statement error
-SELECT * FROM sqlite_scan('https://example.com/non-existent-database.db', 'test');
+SELECT * FROM sqlite_scan('https://this-domain-does-not-exist-12345.invalid/test.db', 'test');
 ----
-Error
+unable to open database file
+
+# Test: Valid file but not SQLite format
+statement error
+SELECT * FROM sqlite_scan('https://raw.githubusercontent.com/duckdb/duckdb/main/README.md', 'test');
+----
+file is not a database
+
+# Test: Non-existent file on valid domain (404)
+statement error
+SELECT * FROM sqlite_scan('https://raw.githubusercontent.com/duckdb/duckdb/main/definitely_nonexistent.db', 'test');
+----
+unable to open database file

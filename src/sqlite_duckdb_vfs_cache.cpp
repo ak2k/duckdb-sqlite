@@ -12,10 +12,14 @@
 #include "duckdb/common/exception/http_exception.hpp"
 #include "duckdb/common/file_system.hpp"
 #include "duckdb/common/mutex.hpp"
+#include "duckdb/common/string_util.hpp"
 #include "duckdb/common/unordered_map.hpp"
+#include "duckdb/common/operator/cast_operators.hpp"
+#include "duckdb/common/re2_regex.hpp"
 #include "duckdb/main/client_context.hpp"
 #include "duckdb/main/database.hpp"
 #include "duckdb/storage/buffer_manager.hpp"
+#include "duckdb/common/atomic.hpp"
 
 #include <cstring>
 
@@ -91,65 +95,158 @@ struct DuckDBVFSWrapper {
 //   });
 //===--------------------------------------------------------------------===//
 
+// Forward declaration
+struct DuckDBVFSWrapper;
+
+//===--------------------------------------------------------------------===//
+// HTTP Error Mapping
+//===--------------------------------------------------------------------===//
+
+// HTTP error patterns for detection
+static const string HTTP_ERROR_PATTERNS[] = {
+	"\"exception_type\":\"HTTP\"",
+	"\"exception_type\":\"IO\"",
+	"404 (Not Found)",
+	"403 (Forbidden)",
+	"401 (Unauthorized)", 
+	"500 (Internal Server Error)",
+	"502 (Bad Gateway)",
+	"503 (Service Unavailable)",
+	"Unable to connect to URL",
+	"Could not establish connection",
+	"HTTP HEAD to",
+	"HTTP GET to"
+};
+
+// Modern regex-based HTTP status code extraction using DuckDB's regex wrapper
+static int ExtractHTTPStatus(const string &error_msg) {
+	// Comprehensive regex pattern for all HTTP status code formats:
+	// Group 1: "status_code":"XXX" (JSON)
+	// Group 2: XXX (Description) (httpfs format) 
+	// Group 3: (HTTP XXX) or HTTP code XXX or HTTP XXX
+	static duckdb_re2::Regex status_regex(
+		"\"status_code\":\"(\\d{3})\"|" // JSON format
+		"(\\d{3})\\s*\\([^)]+\\)|" // "404 (Not Found)"
+		"\\(?HTTP\\s+(?:code\\s+)?(\\d{3})\\)?" // "(HTTP 404)", "HTTP code 403", "HTTP 500"
+	);
+	
+	duckdb_re2::Match match;
+	if (duckdb_re2::RegexSearch(error_msg, match, status_regex)) {
+		// Check which group captured the status code (groups are 1-indexed)
+		for (idx_t i = 1; i < match.groups.size(); i++) {
+			if (!match.groups[i].text.empty()) {
+				int32_t result;
+				if (TryCast::Operation<string_t, int32_t>(string_t(match.groups[i].text), result)) {
+					return result;
+				}
+			}
+		}
+	}
+	
+	return 0; // No status code found
+}
+
+// Modern idiomatic HTTP error detection using StringUtil
+static bool IsHTTPError(const string &error_msg) {
+	// Use std::any_of with StringUtil::Contains for cleaner, more efficient checking
+	return std::any_of(std::begin(HTTP_ERROR_PATTERNS), std::end(HTTP_ERROR_PATTERNS),
+		[&error_msg](const string &pattern) {
+			return StringUtil::Contains(error_msg, pattern);
+		});
+}
+
+// Map HTTP status code to SQLite error code
+static int HTTPStatusToSQLiteError(int http_status) {
+	switch (http_status) {
+		case 404: 
+			return SQLITE_CANTOPEN;       // SQLite will interpret as "unable to open database file"
+		case 401:                         // Unauthorized (auth required)
+		case 403: 
+			return SQLITE_PERM;           // "permission denied"
+		case 408: 
+			return SQLITE_IOERR_ACCESS;   // Request timeout
+		case 429: 
+			return SQLITE_BUSY;           // Too many requests
+		default:
+			if (http_status >= 500 && http_status < 600) {
+				return SQLITE_IOERR;      // Server errors
+			}
+			return 0; // Unknown/unmapped status
+	}
+}
+
 template<typename T>
-static T SafeVFSCall(T error_value, const std::function<T()> &func, DuckDBVFSWrapper *wrapper = nullptr, const char *path = nullptr) {
+static T SafeVFSCall(T error_value, const std::function<T()> &func, DuckDBVFSWrapper *wrapper = nullptr, const char *path = nullptr, const char *method = nullptr) {
 	try {
 		return func();
-	} catch (const HTTPException &e) {
-		// Store HTTP error context
-		if (wrapper) {
-			string error_msg = "HTTP Error: ";
-			error_msg += e.what();
-			if (path) {
-				error_msg += " (URL: ";
-				error_msg += path;
-				error_msg += ")";
+	} catch (const std::exception &e) {
+		string error_msg = e.what();
+		// fprintf(stderr, "DEBUG VFS: Exception caught in %s: %.200s\n", method ? method : "unknown", error_msg.c_str());
+		// fprintf(stderr, "DEBUG VFS: IsHTTPError result: %s\n", IsHTTPError(error_msg) ? "true" : "false");
+		
+		// Check if this is an HTTP error
+		if (IsHTTPError(error_msg)) {
+			// Store HTTP error context
+			if (wrapper) {
+				string full_error = "HTTP Error: ";
+				full_error += error_msg;
+				if (path) {
+					full_error += " (URL: ";
+					full_error += path;
+					full_error += ")";
+				}
+				wrapper->SetLastError(full_error);
 			}
-			wrapper->SetLastError(error_msg);
-		}
-		return error_value == SQLITE_OK ? SQLITE_IOERR : error_value;
-	} catch (const PermissionException &e) {
-		if (wrapper) {
-			string error_msg = "Permission denied: ";
-			error_msg += e.what();
-			if (path) {
-				error_msg += " (Path: ";
-				error_msg += path;
-				error_msg += ")";
+			
+			// Try to map HTTP status to specific SQLite error
+			int http_status = ExtractHTTPStatus(error_msg);
+			int sqlite_error = HTTPStatusToSQLiteError(http_status);
+			// Debug (uncomment for troubleshooting)
+			// fprintf(stderr, "DEBUG: Error message (first 200 chars): %.200s\n", error_msg.c_str());
+			// fprintf(stderr, "DEBUG: HTTP Status: %d, SQLite Error: %d\n", http_status, sqlite_error);
+			if (sqlite_error != 0) {
+				return sqlite_error;
 			}
-			wrapper->SetLastError(error_msg);
-		}
-		return error_value == SQLITE_OK ? SQLITE_PERM : error_value;
-	} catch (const IOException &e) {
-		if (wrapper) {
-			string error_msg = "I/O Error: ";
-			error_msg += e.what();
-			if (path) {
-				error_msg += " (Path: ";
-				error_msg += path;
-				error_msg += ")";
+			
+			// Special case: Network connection failures should be treated as "unable to open"
+			if (error_msg.find("Unable to connect to URL") != string::npos ||
+			    error_msg.find("Could not establish connection") != string::npos) {
+				return error_value == SQLITE_OK ? SQLITE_CANTOPEN : error_value;
 			}
-			wrapper->SetLastError(error_msg);
+			
+			// Default for unmapped HTTP errors (server errors, etc.)
+			return error_value == SQLITE_OK ? SQLITE_IOERR : error_value;
 		}
-		return error_value == SQLITE_OK ? SQLITE_IOERR : error_value;
-	} catch (const Exception &e) {
-		// DuckDB exceptions - store context
-		if (wrapper) {
-			string error_msg = "Database Error: ";
-			error_msg += e.what();
-			if (path) {
-				error_msg += " (Path: ";
-				error_msg += path;
-				error_msg += ")";
+		
+		// Check for specific DuckDB exception types in the message
+		if (error_msg.find("Permission") != string::npos) {
+			if (wrapper) {
+				string full_error = "Permission denied: ";
+				full_error += error_msg;
+				if (path) {
+					full_error += " (Path: ";
+					full_error += path;
+					full_error += ")";
+				}
+				wrapper->SetLastError(full_error);
 			}
-			wrapper->SetLastError(error_msg);
+			return error_value == SQLITE_OK ? SQLITE_PERM : error_value;
 		}
+		
+		// Store generic error context
+		if (wrapper) {
+			string full_error = "Error: ";
+			full_error += error_msg;
+			if (path) {
+				full_error += " (Path: ";
+				full_error += path;
+				full_error += ")";
+			}
+			wrapper->SetLastError(full_error);
+		}
+		
+		// Default error handling
 		return error_value;
-	} catch (const std::bad_alloc &) {
-		if (wrapper) {
-			wrapper->SetLastError("Out of memory");
-		}
-		return error_value == SQLITE_OK ? SQLITE_NOMEM : error_value;
 	} catch (...) {
 		// Unknown exception
 		if (wrapper) {
@@ -203,7 +300,8 @@ static void InitializeIOMethods(sqlite3_io_methods &io_methods) {
 
 // Get the unique VFS name for a ClientContext
 static string GetUniqueVFSName(const ClientContext *context) {
-	return "duckdb_cache_vfs_" + to_string(reinterpret_cast<uintptr_t>(context));
+	static atomic<uint64_t> vfs_counter{0};
+	return "duckdb_cache_vfs_" + to_string(vfs_counter.fetch_add(1));
 }
 
 //===--------------------------------------------------------------------===//
@@ -245,102 +343,106 @@ void DuckDBCachedFile::EnsureInitialized() {
 	// though the actual read patterns are determined by our Read implementation.
 	auto caching_fs = CachingFileSystem::Get(context);
 	OpenFileInfo file_info(path);
+	// fprintf(stderr, "DEBUG: About to open file: %s\n", path.c_str());
 	caching_handle = caching_fs.OpenFile(file_info, flags);
 	
-	// Cache the file size to avoid repeated remote calls
-	cached_file_size = static_cast<sqlite3_int64>(caching_handle->GetFileSize());
 		
 	initialized = true;
 }
 
 
 int DuckDBCachedFile::Read(void *buffer, int amount, sqlite3_int64 offset) {
+	// Validate inputs to prevent integer overflow attacks
+	if (offset < 0 || amount < 0) {
+		return SQLITE_IOERR_READ;
+	}
+	
 	// Early return for empty reads (SQLite sometimes requests 0 bytes)
-	if (!buffer || amount <= 0) {
+	if (!buffer || amount == 0) {
 		return SQLITE_OK;
 	}
 	
 	// Ensure we're initialized before first read
-	try {
-		EnsureInitialized();
-	} catch (...) {
-		return SQLITE_IOERR_READ;
-	}
+	// Let exceptions propagate to SafeVFSCall for unified error handling
+	EnsureInitialized();
 	
 	// Safety check - should never happen in normal operation
 	if (!caching_handle) {
 		return SQLITE_IOERR_READ;
 	}
 
-	try {
-		// Check if we're reading past EOF
-		if (offset >= cached_file_size) {
-			// Reading completely past EOF - zero-fill entire buffer
-			memset(buffer, 0, amount);
-			return SQLITE_IOERR_SHORT_READ;
-		}
-		
-		// Calculate how many bytes we can actually read
-		const sqlite3_int64 available_bytes = cached_file_size - offset;
-		const int bytes_to_read = (available_bytes < amount) ? static_cast<int>(available_bytes) : amount;
-		
-		// Calculate optimal read-ahead size based on access pattern
-		const uint64_t readahead_size = CalculateReadAheadSize(offset, bytes_to_read);
-		
-		// Ensure we read at least the requested amount (up to EOF)
-		uint64_t actual_read_size = MaxValue(static_cast<uint64_t>(bytes_to_read), readahead_size);
-		
-		// Don't read beyond file end
-		if (offset + static_cast<sqlite3_int64>(actual_read_size) > cached_file_size) {
-			actual_read_size = static_cast<uint64_t>(cached_file_size - offset);
-		}
-		
-		// Use DuckDB's CachingFileSystem with adaptive read-ahead
-		data_ptr_t read_buffer = nullptr;
-		auto buffer_handle = caching_handle->Read(read_buffer, actual_read_size, offset);
-		
-		// Validate read buffer before copying
-		if (!read_buffer) {
-			return SQLITE_IOERR_READ;
-		}
-		
-		// Copy the data we read
-		memcpy(buffer, read_buffer, bytes_to_read);
-		
-		// If we read less than requested, zero-fill the remainder
-		if (bytes_to_read < amount) {
-			memset(static_cast<char*>(buffer) + bytes_to_read, 0, amount - bytes_to_read);
-		}
-		
-		// Update read-ahead state after successful read
-		UpdateReadAheadState(offset, bytes_to_read);
-		
-		// Return appropriate code based on whether we satisfied the full request
-		return (bytes_to_read < amount) ? SQLITE_IOERR_SHORT_READ : SQLITE_OK;
-	} catch (...) {
-		// Map all exceptions to SQLite I/O errors.
-		// DuckDB will have already logged the actual error details.
+	// Get current file size from DuckDB (handles validation/caching)
+	const sqlite3_int64 file_size = static_cast<sqlite3_int64>(caching_handle->GetFileSize());
+	
+	// Check if we're reading past EOF
+	if (offset >= file_size) {
+		// Reading completely past EOF - zero-fill entire buffer
+		memset(buffer, 0, amount);
+		return SQLITE_IOERR_SHORT_READ;
+	}
+	
+	// Calculate how many bytes we can actually read
+	const sqlite3_int64 available_bytes = file_size - offset;
+	const int bytes_to_read = (available_bytes < amount) ? static_cast<int>(available_bytes) : amount;
+	
+	// Calculate optimal read-ahead size based on access pattern
+	const idx_t readahead_size = CalculateReadAheadSize(offset, bytes_to_read);
+	
+	// Ensure we read at least the requested amount (up to EOF)
+	idx_t actual_read_size = MaxValue(static_cast<idx_t>(bytes_to_read), readahead_size);
+	
+	// Don't read beyond file end (use safe arithmetic to prevent overflow)
+	// We already know offset < file_size from the check above
+	const sqlite3_int64 remaining_bytes = file_size - offset;
+	if (static_cast<sqlite3_int64>(actual_read_size) > remaining_bytes) {
+		actual_read_size = static_cast<idx_t>(remaining_bytes);
+	}
+	
+	// Use DuckDB's CachingFileSystem with adaptive read-ahead
+	data_ptr_t read_buffer = nullptr;
+	auto buffer_handle = caching_handle->Read(read_buffer, actual_read_size, offset);
+	
+	// Validate read buffer before copying
+	if (!read_buffer) {
 		return SQLITE_IOERR_READ;
 	}
+	
+	// Copy the data we read
+	memcpy(buffer, read_buffer, bytes_to_read);
+	
+	// Note: SQLite validates the database header itself when opening the database,
+	// so we don't need to duplicate that validation here.
+	
+	// If we read less than requested, zero-fill the remainder
+	if (bytes_to_read < amount) {
+		memset(static_cast<char*>(buffer) + bytes_to_read, 0, amount - bytes_to_read);
+	}
+	
+	// Update read-ahead state after successful read
+	UpdateReadAheadState(offset, bytes_to_read);
+	
+	// Return appropriate code based on whether we satisfied the full request
+	return (bytes_to_read < amount) ? SQLITE_IOERR_SHORT_READ : SQLITE_OK;
 }
 
 sqlite3_int64 DuckDBCachedFile::GetFileSize() {
 	try {
 		EnsureInitialized();
+		// Let DuckDB handle all caching/validation logic
+		return static_cast<sqlite3_int64>(caching_handle->GetFileSize());
 	} catch (...) {
 		return -1;
 	}
-	return cached_file_size;
 }
 
-uint64_t DuckDBCachedFile::CalculateReadAheadSize(sqlite3_int64 offset, int amount) const {
+idx_t DuckDBCachedFile::CalculateReadAheadSize(sqlite3_int64 offset, int amount) const {
 	// First read or non-sequential access - use minimum size
 	if (last_read_offset == -1 || !IsSequentialRead(offset)) {
 		return MIN_READAHEAD_SIZE;
 	}
 	
 	// Sequential read - double the current size up to maximum
-	const uint64_t next_size = current_readahead_size * 2;
+	const idx_t next_size = current_readahead_size * 2;
 	return MinValue(next_size, MAX_READAHEAD_SIZE);
 }
 
@@ -509,22 +611,17 @@ int SQLiteDuckDBCacheVFS::Open(sqlite3_vfs *vfs, const char *filename, sqlite3_f
 			return SQLITE_CANTOPEN;
 		}
 		
-		auto *wrapper = static_cast<DuckDBVFSWrapper*>(vfs->pAppData);
+		// wrapper is already declared in outer scope
 		ClientContext *context = wrapper->context;
 		
-		if (!context) {
-			return SQLITE_CANTOPEN;
-		}
-		
-		// Validate that the ClientContext is still valid by checking if it has a database
-		if (!context->db) {
+		// Defensive check: Validate context is still valid
+		if (!context || !context->db) {
 			return SQLITE_CANTOPEN;
 		}
 
 		// Initialize the structure members properly
 		duckdb_file->base.pMethods = &wrapper->io_methods;
 		duckdb_file->duckdb_file = nullptr;
-		duckdb_file->context = context;
 		
 		// Create the DuckDB file handle with proper exception handling
 		try {
@@ -533,7 +630,6 @@ int SQLiteDuckDBCacheVFS::Open(sqlite3_vfs *vfs, const char *filename, sqlite3_f
 			// Clean up on failure
 			duckdb_file->base.pMethods = nullptr;
 			duckdb_file->duckdb_file = nullptr;
-			duckdb_file->context = nullptr;
 			return SQLITE_CANTOPEN;
 		}
 		
@@ -545,7 +641,7 @@ int SQLiteDuckDBCacheVFS::Open(sqlite3_vfs *vfs, const char *filename, sqlite3_f
 		}
 
 		return SQLITE_OK;
-	}, wrapper, filename);
+	}, wrapper, filename, "xOpen");
 }
 
 int SQLiteDuckDBCacheVFS::Delete(sqlite3_vfs *vfs, const char *filename, int sync_dir) {
@@ -659,9 +755,16 @@ void *SQLiteDuckDBCacheVFS::DlOpen(sqlite3_vfs *vfs, const char *filename) {
 }
 
 void SQLiteDuckDBCacheVFS::DlError(sqlite3_vfs *vfs, int bytes, char *err_msg) {
-	if (err_msg && bytes > 0) {
-		strncpy(err_msg, "Dynamic loading not supported for remote files", bytes - 1);
-		err_msg[bytes - 1] = '\0';
+	try {
+		if (err_msg && bytes > 0) {
+			strncpy(err_msg, "Dynamic loading not supported for remote files", bytes - 1);
+			err_msg[bytes - 1] = '\0';
+		}
+	} catch (...) {
+		// Best effort - if we can't even set the error message, just return
+		if (err_msg && bytes > 0) {
+			err_msg[0] = '\0';
+		}
 	}
 }
 
@@ -674,23 +777,25 @@ void SQLiteDuckDBCacheVFS::DlClose(sqlite3_vfs *vfs, void *handle) {
 }
 
 int SQLiteDuckDBCacheVFS::GetLastError(sqlite3_vfs *vfs, int bytes, char *err_msg) {
-	if (!vfs || !vfs->pAppData || !err_msg || bytes <= 0) {
-		return 0;
-	}
-	
-	auto *wrapper = static_cast<DuckDBVFSWrapper*>(vfs->pAppData);
-	const string error = wrapper->GetLastError();
-	
-	if (error.empty()) {
-		err_msg[0] = '\0';
-		return 0;
-	}
-	
-	// Copy error message to buffer
-	strncpy(err_msg, error.c_str(), bytes - 1);
-	err_msg[bytes - 1] = '\0';
-	
-	return static_cast<int>(error.length());
+	return SafeVFSCall<int>(0, [&]() {
+		if (!vfs || !vfs->pAppData || !err_msg || bytes <= 0) {
+			return 0;
+		}
+		
+		auto *wrapper = static_cast<DuckDBVFSWrapper*>(vfs->pAppData);
+		const string error = wrapper->GetLastError();
+		
+		if (error.empty()) {
+			err_msg[0] = '\0';
+			return 0;
+		}
+		
+		// Copy error message to buffer
+		strncpy(err_msg, error.c_str(), bytes - 1);
+		err_msg[bytes - 1] = '\0';
+		
+		return static_cast<int>(error.length());
+	});
 }
 
 //===--------------------------------------------------------------------===//
@@ -704,7 +809,6 @@ int SQLiteDuckDBCacheVFS::Close(sqlite3_file *file) {
 			// Explicitly delete the raw pointer
 			delete duckdb_file->duckdb_file;
 			duckdb_file->duckdb_file = nullptr;
-			duckdb_file->context = nullptr;
 		}
 		return SQLITE_OK;
 	});

@@ -1,0 +1,47 @@
+# name: test/sql/scanner/http_sqlite_09_http_errors.test
+# description: Test HTTP error code mapping to SQLite errors
+# group: [sqlite_scanner]
+
+require sqlite_scanner
+
+statement ok
+INSTALL httpfs;
+
+statement ok
+LOAD httpfs;
+
+# Test 404 error - should map to "unable to open database file"
+statement error
+SELECT * FROM sqlite_scan('https://httpbin.org/status/404', 'test');
+----
+unable to open database file
+
+# Test 403 error - should map to "access permission denied"
+statement error
+SELECT * FROM sqlite_scan('https://httpbin.org/status/403', 'test');
+----
+access permission denied
+
+# Test 401 error - should also map to "access permission denied"
+statement error
+SELECT * FROM sqlite_scan('https://httpbin.org/status/401', 'test');
+----
+access permission denied
+
+# Test 500 error - should map to "unable to open database file" (network issue)
+statement error
+SELECT * FROM sqlite_scan('https://httpbin.org/status/500', 'test');
+----
+unable to open database file
+
+# Test 429 error - should map to "database is locked"
+statement error
+SELECT * FROM sqlite_scan('https://httpbin.org/status/429', 'test');
+----
+database is locked
+
+# Test with non-existent GitHub file (real-world 404 scenario)
+statement error
+SELECT * FROM sqlite_scan('https://raw.githubusercontent.com/duckdb/duckdb/main/nonexistent_file_404.db', 'test');
+----
+unable to open database file
