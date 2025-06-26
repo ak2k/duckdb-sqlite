@@ -123,13 +123,7 @@ static void SqliteInitInternal(ClientContext &context, const SqliteBindData &bin
 	} else {
 		sql = bind_data.sql;
 	}
-	try {
-		local_state.stmt = local_state.db->Prepare(sql.c_str());
-	} catch (const std::exception& e) {
-		throw;
-	} catch (...) {
-		throw;
-	}
+	local_state.stmt = local_state.db->Prepare(sql.c_str());
 }
 
 static unique_ptr<NodeStatistics> SqliteCardinality(ClientContext &context, const FunctionData *bind_data_p) {

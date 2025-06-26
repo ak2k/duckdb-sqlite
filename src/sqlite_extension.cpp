@@ -70,13 +70,7 @@ void SqliteScannerExtension::Load(DuckDB &db) {
 }
 
 DUCKDB_EXTENSION_API void sqlite_scanner_init(duckdb::DatabaseInstance &db) {
-	try {
-		LoadInternal(db);
-	} catch (const std::exception &e) {
-		throw;
-	} catch (...) {
-		throw;
-	}
+	LoadInternal(db);
 }
 
 DUCKDB_EXTENSION_API const char *sqlite_scanner_version() {
