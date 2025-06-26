@@ -166,11 +166,22 @@ int DuckDBCachedFile::Read(void *buffer, int amount, sqlite3_int64 offset) {
 	}
 
 	try {
-		// Calculate optimal read-ahead size based on access pattern
-		uint64_t readahead_size = CalculateReadAheadSize(offset, amount);
+		// Check if we're reading past EOF
+		if (offset >= cached_file_size) {
+			// Reading completely past EOF - zero-fill entire buffer
+			memset(buffer, 0, amount);
+			return SQLITE_IOERR_SHORT_READ;
+		}
 		
-		// Ensure we read at least the requested amount
-		uint64_t actual_read_size = std::max(static_cast<uint64_t>(amount), readahead_size);
+		// Calculate how many bytes we can actually read
+		sqlite3_int64 available_bytes = cached_file_size - offset;
+		int bytes_to_read = (available_bytes < amount) ? static_cast<int>(available_bytes) : amount;
+		
+		// Calculate optimal read-ahead size based on access pattern
+		uint64_t readahead_size = CalculateReadAheadSize(offset, bytes_to_read);
+		
+		// Ensure we read at least the requested amount (up to EOF)
+		uint64_t actual_read_size = std::max(static_cast<uint64_t>(bytes_to_read), readahead_size);
 		
 		// Don't read beyond file end
 		if (offset + static_cast<sqlite3_int64>(actual_read_size) > cached_file_size) {
@@ -186,13 +197,19 @@ int DuckDBCachedFile::Read(void *buffer, int amount, sqlite3_int64 offset) {
 			return SQLITE_IOERR_READ;
 		}
 		
-		// Copy only the requested amount to user buffer
-		memcpy(buffer, read_buffer, amount);
+		// Copy the data we read
+		memcpy(buffer, read_buffer, bytes_to_read);
+		
+		// If we read less than requested, zero-fill the remainder
+		if (bytes_to_read < amount) {
+			memset(static_cast<char*>(buffer) + bytes_to_read, 0, amount - bytes_to_read);
+		}
 		
 		// Update read-ahead state after successful read
-		UpdateReadAheadState(offset, amount);
+		UpdateReadAheadState(offset, bytes_to_read);
 		
-		return SQLITE_OK;
+		// Return appropriate code based on whether we satisfied the full request
+		return (bytes_to_read < amount) ? SQLITE_IOERR_SHORT_READ : SQLITE_OK;
 	} catch (...) {
 		// Map all exceptions to SQLite I/O errors.
 		// DuckDB will have already logged the actual error details.
@@ -433,21 +450,72 @@ int SQLiteDuckDBCacheVFS::Access(sqlite3_vfs *vfs, const char *filename, int fla
 	// Initialize result to safe default
 	*result = 0;
 
-	// For remote files, we can't easily check existence without potentially
-	// triggering DuckDB operations in the wrong context. SQLite will handle
-	// the error when it tries to open a non-existent file.
-	// 
-	// Return 0 (file doesn't exist) for all remote files to be safe.
-	// SQLite will attempt to open the file anyway and handle any errors.
-	if (flags == SQLITE_ACCESS_EXISTS) {
-		// Always return 0 for remote files to avoid DuckDB operations
-		*result = 0;
-	} else {
-		// Remote files don't support write or delete access
-		*result = 0;
-	}
+	try {
+		// For remote files, we need to handle journal/WAL file checks properly.
+		// SQLite uses Access() to check for the existence of journal and WAL files
+		// to determine if a database might have uncommitted transactions.
+		
+		if (flags == SQLITE_ACCESS_EXISTS) {
+			// Check if this is a journal or WAL file by examining the suffix
+			string file_path(filename);
+			bool is_journal = false;
+			bool is_wal = false;
+			
+			// Check for journal file suffixes
+			if (file_path.size() > 8) {
+				string suffix = file_path.substr(file_path.size() - 8);
+				if (suffix == "-journal" || suffix == "-wal") {
+					is_journal = (suffix == "-journal");
+					is_wal = (suffix == "-wal");
+				}
+			}
+			
+			if (is_journal || is_wal) {
+				// For journal/WAL files, we need to check if they actually exist
+				// This is critical for SQLite to properly detect hot journals
+				if (!vfs->pAppData) {
+					*result = 0;
+					return SQLITE_OK;
+				}
+				
+				auto *wrapper = static_cast<DuckDBVFSWrapper*>(vfs->pAppData);
+				ClientContext *context = wrapper->context;
+				
+				if (!context) {
+					*result = 0;
+					return SQLITE_OK;
+				}
+				
+				// Try to check file existence through DuckDB's filesystem
+				try {
+					auto &fs = context->db->GetFileSystem();
+					*result = fs.FileExists(file_path) ? 1 : 0;
+				} catch (...) {
+					// If we can't check, assume it doesn't exist
+					*result = 0;
+				}
+			} else {
+				// For the main database file, return 0 to let SQLite try to open it
+				// This avoids triggering DuckDB operations in the wrong context
+				*result = 0;
+			}
+		} else if (flags == SQLITE_ACCESS_READWRITE) {
+			// Remote files are always read-only
+			*result = 0;
+		} else if (flags == SQLITE_ACCESS_READ) {
+			// We can read remote files, but defer actual check to open
+			*result = 0;
+		} else {
+			// Unknown access type
+			*result = 0;
+		}
 
-	return SQLITE_OK;
+		return SQLITE_OK;
+	} catch (...) {
+		// On any error, return that file doesn't exist
+		*result = 0;
+		return SQLITE_OK;
+	}
 }
 
 int SQLiteDuckDBCacheVFS::FullPathname(sqlite3_vfs *vfs, const char *filename, int out_size, char *out_buf) {
