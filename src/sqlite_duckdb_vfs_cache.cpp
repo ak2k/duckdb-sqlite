@@ -58,7 +58,7 @@ struct DuckDBVFSWrapper {
 	mutable mutex error_mutex;
 	string last_error_message;
 	
-	~DuckDBVFSWrapper() {
+	~DuckDBVFSWrapper() noexcept {
 		// Clean up using SQLite's allocator to match sqlite3_malloc
 		if (vfs_name) {
 			sqlite3_free(vfs_name);
@@ -214,6 +214,17 @@ DuckDBCachedFile::DuckDBCachedFile(ClientContext &context, const string &path)
     : context(context), path(path) {
 	// Defer actual file opening until first use to avoid doing DuckDB operations
 	// during SQLite VFS callbacks, which might be in a different serialization context
+}
+
+DuckDBCachedFile::~DuckDBCachedFile() {
+	// Ensure proper cleanup of the caching handle
+	// The unique_ptr will automatically release the handle,
+	// but we add this explicit destructor for clarity and
+	// to enable future debugging/validation if needed
+	if (caching_handle) {
+		// Reset explicitly to ensure deterministic cleanup order
+		caching_handle.reset();
+	}
 }
 
 void DuckDBCachedFile::EnsureInitialized() {

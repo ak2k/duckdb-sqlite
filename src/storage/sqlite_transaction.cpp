@@ -46,7 +46,7 @@ static DatabaseMutexRegistry& GetMutexRegistry() {
 }
 
 SQLiteTransaction::SQLiteTransaction(SQLiteCatalog &sqlite_catalog, TransactionManager &manager, ClientContext &context)
-    : Transaction(manager, context), sqlite_catalog(sqlite_catalog), db(nullptr), started(false), db_initialized(false) {
+    : Transaction(manager, context), sqlite_catalog(sqlite_catalog), db(nullptr) {
 
 	// Database connection and transaction start are deferred to prevent potential deadlocks.
 	// Opening SQLite connections for remote files can trigger HTTP requests and caching
@@ -61,7 +61,7 @@ SQLiteTransaction::~SQLiteTransaction() {
 
 void SQLiteTransaction::Start() {
 
-	if (!started) {
+	if (!started.load(std::memory_order_acquire)) {
 		GetDB(); // This will handle both connection and transaction start
 	}
 }
@@ -98,9 +98,9 @@ SQLiteDB &SQLiteTransaction::GetDB() {
 		}
 		
 		// Start transaction if not already started
-		if (!started) {
+		if (!started.load(std::memory_order_relaxed)) {
 			db->Execute("BEGIN TRANSACTION");
-			started = true;
+			started.store(true, std::memory_order_relaxed);
 		}
 		
 		// Mark as initialized with release semantics to ensure all writes are visible

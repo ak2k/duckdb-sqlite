@@ -40,9 +40,9 @@ private:
 	SQLiteDB *db;
 	SQLiteDB owned_db;
 	case_insensitive_map_t<unique_ptr<CatalogEntry>> catalog_entries;
-	bool started;
 	
-	// Atomic flag for thread-safe initialization check
+	// Atomic flags for thread-safe initialization
+	std::atomic<bool> started{false};
 	std::atomic<bool> db_initialized{false};
 };
 

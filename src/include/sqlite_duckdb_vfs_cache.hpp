@@ -26,7 +26,7 @@ class ClientContext;
 class DuckDBCachedFile {
 public:
 	DuckDBCachedFile(ClientContext &context, const string &path);
-	~DuckDBCachedFile() = default;
+	~DuckDBCachedFile();
 
 	// Read data from the file at the specified offset
 	int Read(void *buffer, int amount, sqlite3_int64 offset);
