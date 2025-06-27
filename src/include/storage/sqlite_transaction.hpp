@@ -10,6 +10,8 @@
 
 #include "duckdb/transaction/transaction.hpp"
 #include "duckdb/common/case_insensitive_map.hpp"
+#include "duckdb/common/mutex.hpp"
+#include "duckdb/common/atomic.hpp"
 #include "sqlite_db.hpp"
 
 namespace duckdb {
@@ -37,6 +39,10 @@ private:
 	SQLiteDB *db;
 	SQLiteDB owned_db;
 	case_insensitive_map_t<unique_ptr<CatalogEntry>> catalog_entries;
+	
+	// Atomic flags for thread-safe initialization
+	atomic<bool> started{false};
+	atomic<bool> db_initialized{false};
 };
 
 } // namespace duckdb

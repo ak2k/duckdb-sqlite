@@ -5,14 +5,17 @@
 #include "storage/sqlite_schema_entry.hpp"
 #include "storage/sqlite_transaction.hpp"
 #include "duckdb/common/exception/transaction_exception.hpp"
+#include "duckdb/common/limits.hpp"
 
 namespace duckdb {
 
 SQLiteCatalog::SQLiteCatalog(AttachedDatabase &db_p, const string &path, SQLiteOpenOptions options_p)
-    : Catalog(db_p), path(path), options(std::move(options_p)), in_memory(path == ":memory:"), active_in_memory(false) {
-	if (InMemory()) {
-		in_memory_db = SQLiteDB::Open(path, options, true);
+    : Catalog(db_p), path(path), options(std::move(options_p)), in_memory(path == ":memory:"), active_in_memory(false), in_memory_db_initialized(false) {
+	if (options.busy_timeout > 0 && options.busy_timeout > NumericLimits<int>::Maximum()) {
+		throw std::runtime_error("busy_timeout out of range - must be within "
+		                         "valid range for type int");
 	}
+	// In-memory database is now opened lazily in GetInMemoryDatabase to support deferred initialization
 }
 
 SQLiteCatalog::~SQLiteCatalog() {
@@ -52,11 +55,18 @@ string SQLiteCatalog::GetDBPath() {
 	return path;
 }
 
-SQLiteDB *SQLiteCatalog::GetInMemoryDatabase() {
+SQLiteDB *SQLiteCatalog::GetInMemoryDatabase(ClientContext &context) {
 	if (!InMemory()) {
 		throw InternalException("GetInMemoryDatabase() called on a non-in-memory database");
 	}
 	lock_guard<mutex> l(in_memory_lock);
+	
+	// Initialize the in-memory database on first access
+	if (!in_memory_db_initialized) {
+		in_memory_db = SQLiteDB::Open(path, options, context, true);
+		in_memory_db_initialized = true;
+	}
+	
 	if (active_in_memory) {
 		throw TransactionException("Only a single transaction can be active on an "
 		                           "in-memory SQLite database at a time");
