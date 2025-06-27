@@ -1,0 +1,29 @@
+# name: test/sql/scanner/http_sqlite_08_error_handling.test
+# description: Error handling for remote SQLite databases
+# group: [sqlite_scanner]
+
+require sqlite_scanner
+
+statement ok
+INSTALL httpfs;
+
+statement ok
+LOAD httpfs;
+
+# Test: Invalid domain (network error)
+statement error
+SELECT * FROM sqlite_scan('https://this-domain-does-not-exist-12345.invalid/test.db', 'test');
+----
+unable to open database file
+
+# Test: Valid file but not SQLite format
+statement error
+SELECT * FROM sqlite_scan('https://raw.githubusercontent.com/duckdb/duckdb/main/README.md', 'test');
+----
+file is not a database
+
+# Test: Non-existent file on valid domain (404)
+statement error
+SELECT * FROM sqlite_scan('https://raw.githubusercontent.com/duckdb/duckdb/main/definitely_nonexistent.db', 'test');
+----
+unable to open database file

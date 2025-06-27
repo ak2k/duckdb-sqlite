@@ -1,0 +1,28 @@
+# name: test/sql/scanner/http_sqlite_01_basic_scan.test
+# description: Basic HTTP SQLite scan functionality
+# group: [sqlite_scanner]
+
+require sqlite_scanner
+
+statement ok
+INSTALL httpfs;
+
+statement ok
+LOAD httpfs;
+
+# Test 1: Basic remote SQLite query
+query I
+SELECT COUNT(*) FROM sqlite_scan('https://github.com/lerocha/chinook-database/raw/master/ChinookDatabase/DataSources/Chinook_Sqlite.sqlite', 'Artist');
+----
+275
+
+# Test 2: Query with WHERE clause and ORDER BY
+query IT
+SELECT ArtistId, Name FROM sqlite_scan('https://github.com/lerocha/chinook-database/raw/master/ChinookDatabase/DataSources/Chinook_Sqlite.sqlite', 'Artist') 
+WHERE Name LIKE 'A%' 
+ORDER BY Name 
+LIMIT 3;
+----
+43	A Cor Do Som
+1	AC/DC
+230	Aaron Copland & London Symphony Orchestra

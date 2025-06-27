@@ -1,0 +1,25 @@
+# name: test/sql/scanner/http_sqlite_03_joins.test
+# description: Joins between remote SQLite tables
+# group: [sqlite_scanner]
+
+require sqlite_scanner
+
+statement ok
+INSTALL httpfs;
+
+statement ok
+LOAD httpfs;
+
+# Test 4: Join between remote tables
+query TI
+SELECT ar.Name as Artist, COUNT(*) as AlbumCount
+FROM sqlite_scan('https://github.com/lerocha/chinook-database/raw/master/ChinookDatabase/DataSources/Chinook_Sqlite.sqlite', 'Artist') ar
+JOIN sqlite_scan('https://github.com/lerocha/chinook-database/raw/master/ChinookDatabase/DataSources/Chinook_Sqlite.sqlite', 'Album') al
+ON ar.ArtistId = al.ArtistId
+GROUP BY ar.Name
+ORDER BY AlbumCount DESC, ar.Name
+LIMIT 3;
+----
+Iron Maiden	21
+Led Zeppelin	14
+Deep Purple	11
