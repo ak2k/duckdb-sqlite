@@ -4,6 +4,7 @@
 #include "duckdb/storage/table_storage_info.hpp"
 #include "duckdb/parser/column_list.hpp"
 #include "duckdb/parser/parser.hpp"
+#include "duckdb/main/client_context.hpp"
 #include "sqlite_db.hpp"
 #include "sqlite_stmt.hpp"
 
@@ -63,6 +64,10 @@ SQLiteDB SQLiteDB::Open(const string &path, const SQLiteOpenOptions &options, bo
 		result.Execute("PRAGMA journal_mode=" + KeywordHelper::EscapeQuotes(options.journal_mode, '\''));
 	}
 	return result;
+}
+
+SQLiteDB SQLiteDB::Open(const string &path, const SQLiteOpenOptions &options, ClientContext &context, bool is_shared) {
+	return Open(path, options, is_shared);
 }
 
 bool SQLiteDB::TryPrepare(const string &query, SQLiteStatement &stmt) {
