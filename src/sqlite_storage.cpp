@@ -9,6 +9,7 @@
 #include "duckdb/transaction/transaction_manager.hpp"
 #include "duckdb/catalog/catalog_entry/schema_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
+#include "duckdb/common/limits.hpp"
 
 namespace duckdb {
 
@@ -19,11 +20,16 @@ static unique_ptr<Catalog> SQLiteAttach(StorageExtensionInfo *storage_info, Clie
 	options.access_mode = access_mode;
 	for (auto &entry : info.options) {
 		if (StringUtil::CIEquals(entry.first, "busy_timeout")) {
-			options.busy_timeout = entry.second.GetValue<uint64_t>();
+			uint64_t timeout_value = entry.second.GetValue<uint64_t>();
+			if (timeout_value > NumericLimits<int>::Maximum()) {
+				throw InvalidInputException("busy_timeout out of range - must be within valid range for type int");
+			}
+			options.busy_timeout = timeout_value;
 		} else if (StringUtil::CIEquals(entry.first, "journal_mode")) {
 			options.journal_mode = entry.second.ToString();
 		}
 	}
+
 	return make_uniq<SQLiteCatalog>(db, info.path, std::move(options));
 }
 

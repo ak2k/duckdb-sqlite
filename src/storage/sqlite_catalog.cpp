@@ -12,8 +12,7 @@ namespace duckdb {
 SQLiteCatalog::SQLiteCatalog(AttachedDatabase &db_p, const string &path, SQLiteOpenOptions options_p)
     : Catalog(db_p), path(path), options(std::move(options_p)), in_memory(path == ":memory:"), active_in_memory(false), in_memory_db_initialized(false) {
 	if (options.busy_timeout > 0 && options.busy_timeout > NumericLimits<int>::Maximum()) {
-		throw std::runtime_error("busy_timeout out of range - must be within "
-		                         "valid range for type int");
+		throw BinderException("busy_timeout out of range - must be within valid range for type int");
 	}
 	// In-memory database is now opened lazily in GetInMemoryDatabase to support deferred initialization
 }

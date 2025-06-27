@@ -4,7 +4,11 @@
 #include "duckdb/storage/table_storage_info.hpp"
 #include "duckdb/parser/column_list.hpp"
 #include "duckdb/parser/parser.hpp"
+#include "duckdb/common/exception.hpp"
+#include "duckdb/common/exception/http_exception.hpp"
 #include "duckdb/common/file_open_flags.hpp"
+#include "duckdb/common/swap.hpp"
+#include "duckdb/common/mutex.hpp"
 #include "duckdb/main/client_context.hpp"
 #include "sqlite_db.hpp"
 #include "sqlite_stmt.hpp"
@@ -24,12 +28,16 @@ SQLiteDB::~SQLiteDB() {
 	Close();
 }
 
-SQLiteDB::SQLiteDB(SQLiteDB &&other) noexcept {
-	std::swap(db, other.db);
+SQLiteDB::SQLiteDB(SQLiteDB &&other) noexcept : db(nullptr) {
+	swap(db, other.db);
 }
 
 SQLiteDB &SQLiteDB::operator=(SQLiteDB &&other) noexcept {
-	std::swap(db, other.db);
+	if (this != &other) {
+		// Close any existing database first
+		Close();
+		swap(db, other.db);
+	}
 	return *this;
 }
 
@@ -56,12 +64,11 @@ int SQLiteDB::GetOpenFlags(const SQLiteOpenOptions &options, bool is_shared, boo
 void SQLiteDB::ApplyBusyTimeout(sqlite3 *db, const SQLiteOpenOptions &options) {
 	if (options.busy_timeout > 0) {
 		if (options.busy_timeout > NumericLimits<int>::Maximum()) {
-			throw std::runtime_error("busy_timeout out of range - must be within "
-			                         "valid range for type int");
+			throw BinderException("busy_timeout out of range - must be within valid range for type int");
 		}
 		auto rc = sqlite3_busy_timeout(db, int(options.busy_timeout));
 		if (rc != SQLITE_OK) {
-			throw std::runtime_error("Failed to set busy timeout");
+			throw ConnectionException("Failed to set busy timeout: %s", sqlite3_errmsg(db));
 		}
 	}
 }
@@ -106,7 +113,7 @@ void SQLiteDB::HandleOpenError(const string &path, int rc, ClientContext *contex
 			error_msg = sqlite3_errstr(rc);
 			break;
 	}
-	throw std::runtime_error("Unable to open database \"" + path + "\": " + error_msg);
+	throw ConnectionException("Unable to open database \"%s\": %s", path, error_msg);
 }
 
 // Opens a local SQLite database file using standard SQLite file handling
@@ -167,8 +174,14 @@ SQLiteDB SQLiteDB::Open(const string &path, const SQLiteOpenOptions &options, Cl
 	}
 }
 
+void SQLiteDB::CheckDBValid(sqlite3 *db) {
+	if (!db) {
+		throw InternalException("SQLite database operation called with null database pointer");
+	}
+}
 
 bool SQLiteDB::TryPrepare(const string &query, SQLiteStatement &stmt) {
+	CheckDBValid(db);
 	stmt.db = db;
 	if (debug_sqlite_print_queries) {
 		Printer::Print(query + "\n");
@@ -184,20 +197,19 @@ bool SQLiteDB::TryPrepare(const string &query, SQLiteStatement &stmt) {
 SQLiteStatement SQLiteDB::Prepare(const string &query) {
 	SQLiteStatement stmt;
 	if (!TryPrepare(query, stmt)) {
-		string error = "Failed to prepare query \"" + query + "\": " + string(sqlite3_errmsg(db));
-		throw std::runtime_error(error);
+		throw BinderException("Failed to prepare query \"%s\": %s", query, sqlite3_errmsg(db));
 	}
 	return stmt;
 }
 
 void SQLiteDB::Execute(const string &query) {
+	CheckDBValid(db);
 	if (debug_sqlite_print_queries) {
 		Printer::Print(query + "\n");
 	}
 	auto rc = sqlite3_exec(db, query.c_str(), nullptr, nullptr, nullptr);
 	if (rc != SQLITE_OK) {
-		string error = "Failed to execute query \"" + query + "\": " + string(sqlite3_errmsg(db));
-		throw std::runtime_error(error);
+		throw IOException("Failed to execute query \"%s\": %s", query, sqlite3_errmsg(db));
 	}
 }
 
@@ -259,7 +271,7 @@ void SQLiteDB::GetIndexInfo(const string &index_name, string &sql, string &table
 		sql = stmt.GetValue<string>(1);
 		return;
 	}
-	throw InternalException("GetViewInfo - index \"%s\" not found", index_name);
+	throw InternalException("GetIndexInfo - index \"%s\" not found", index_name);
 }
 
 void SQLiteDB::GetViewInfo(const string &view_name, string &sql) {

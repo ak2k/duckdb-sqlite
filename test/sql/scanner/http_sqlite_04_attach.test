@@ -1,0 +1,24 @@
+# name: test/sql/scanner/http_sqlite_04_attach.test
+# description: ATTACH remote SQLite database
+# group: [sqlite_scanner]
+
+require sqlite_scanner
+
+statement ok
+INSTALL httpfs;
+
+statement ok
+LOAD httpfs;
+
+# Test 5: Attach remote database
+statement ok
+ATTACH 'https://github.com/lerocha/chinook-database/raw/master/ChinookDatabase/DataSources/Chinook_Sqlite.sqlite' AS http_db (TYPE sqlite);
+
+# Test 6: Query attached database
+query I
+SELECT COUNT(*) FROM http_db.Track;
+----
+3503
+
+statement ok
+DETACH http_db;

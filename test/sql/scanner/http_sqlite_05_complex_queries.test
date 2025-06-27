@@ -1,0 +1,49 @@
+# name: test/sql/scanner/http_sqlite_05_complex_queries.test
+# description: Complex queries on attached remote SQLite database
+# group: [sqlite_scanner]
+
+require sqlite_scanner
+
+statement ok
+INSTALL httpfs;
+
+statement ok
+LOAD httpfs;
+
+# First attach the database
+statement ok
+ATTACH 'https://github.com/lerocha/chinook-database/raw/master/ChinookDatabase/DataSources/Chinook_Sqlite.sqlite' AS http_db (TYPE sqlite);
+
+# Test 7: Complex aggregation on attached database
+query TIR
+SELECT g.Name as Genre, COUNT(*) as TrackCount, ROUND(AVG(t.Milliseconds/1000.0), 2) as AvgSeconds
+FROM http_db.Track t
+JOIN http_db.Genre g ON t.GenreId = g.GenreId
+GROUP BY g.Name
+ORDER BY TrackCount DESC
+LIMIT 3;
+----
+Rock	1297	283.91
+Latin	579	232.86
+Metal	374	309.75
+
+# Test 8: Window functions on attached database  
+query TTII
+SELECT 
+    ar.Name as Artist,
+    al.Title as Album,
+    COUNT(t.TrackId) as TrackCount,
+    ROW_NUMBER() OVER (ORDER BY COUNT(t.TrackId) DESC, ar.Name, al.Title) as AlbumRank
+FROM http_db.Artist ar
+JOIN http_db.Album al ON ar.ArtistId = al.ArtistId
+JOIN http_db.Track t ON al.AlbumId = t.AlbumId
+GROUP BY ar.Name, al.Title
+ORDER BY TrackCount DESC, ar.Name, al.Title
+LIMIT 3;
+----
+Lenny Kravitz	Greatest Hits	57	1
+Chico Buarque	Minha Historia	34	2
+Eric Clapton	Unplugged	30	3
+
+statement ok
+DETACH http_db;
